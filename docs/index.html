@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>双屏窗口互换 · 按一下热键，两块屏幕上的窗口整体对调</title>
-<meta name="description" content="Windows 小工具：按一下 Ctrl+Alt+S，把两块显示器上的所有窗口整体互换，贴附好的布局原样保留。免安装、零依赖、开源 MIT。">
+<title>多屏窗口互换 · 按一下热键，屏幕上的窗口整体对调</title>
+<meta name="description" content="Windows 小工具：按一下 Ctrl+Alt+S，把显示器上的所有窗口整体互换，贴附好的布局原样保留。两块到十块屏都能用，支持环形轮转与任意排列。免安装、零依赖、开源 MIT。">
 <link rel="icon" href="assets/icon.png">
 <style>
   :root{
@@ -103,6 +103,8 @@
            color:#fff;display:grid;place-items:center;font-weight:700;font-size:14px;margin-top:2px}
   .step h3{margin:0 0 7px;font-size:16px}
   .step p{margin:0;color:var(--dim);font-size:14.6px}
+  .step .warn-p{color:var(--text);background:color-mix(in srgb,var(--warn) 9%,transparent);
+                border-left:3px solid var(--warn);border-radius:8px;padding:10px 14px}
   pre{background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:14px 16px;
       overflow-x:auto;font-family:var(--mono);font-size:13.2px;line-height:1.75;margin:11px 0 0;color:var(--text)}
   pre b{color:var(--accent);font-weight:600}
@@ -165,7 +167,7 @@
 <nav>
   <div class="wrap nav-in">
     <img class="nav-logo" src="assets/icon.png" alt="">
-    <span class="nav-name">双屏窗口互换</span>
+    <span class="nav-name">多屏窗口互换</span>
     <span class="nav-sp"></span>
     <a class="nav-link" href="#why">为什么</a>
     <a class="nav-link" href="#feat">特性</a>
@@ -181,14 +183,15 @@
     <div>
       <div class="badges">
         <span class="badge">Windows 10 / 11</span>
+        <span class="badge">2–10 块屏</span>
         <span class="badge">免安装单文件</span>
         <span class="badge">零第三方依赖</span>
-        <span class="badge">开源 MIT</span>
       </div>
-      <h1>两块屏幕上的窗口<br><span class="grad">按一下热键，整体对调</span></h1>
+      <h1>屏幕上的窗口，<br><span class="grad">按一下热键，整体对调</span></h1>
       <p class="lede">
         左边屏的开发环境、右边屏的浏览器和文档 —— 一个热键全部对换，
         <b>贴附好的布局原样保留</b>。最大化的还是最大化，左右分屏的还在原来的相对位置。
+        三块屏以上还能环形轮转，或者任意指定哪块屏送往哪块屏。
       </p>
       <div class="cta">
         <a class="btn btn-p" href="https://github.com/DC1024/swap-monitors/releases/latest/download/SwapMonitors.exe">
@@ -284,6 +287,11 @@
       </div>
 
       <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><rect x="1.5" y="6.5" width="6.2" height="8" rx="1.4"/><rect x="8.9" y="6.5" width="6.2" height="8" rx="1.4"/><rect x="16.3" y="6.5" width="6.2" height="8" rx="1.4"/><path d="M4.6 14.5v3M12 14.5v3M19.4 14.5v3"/></svg></span>两块以上也好用</h3>
+        <p>每块屏都有自己的「送往」下拉：三块屏可以 <code>1→2→3→1</code> 环形轮转，也可以任意指定配对；<b>没被指定的屏一个窗口都不动</b>。还有「环形轮转 / 两两互换 / 全部不动」三个预设。</p>
+      </div>
+
+      <div class="card">
         <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 9.5h16M9.5 9.5V20"/></svg></span>布局真的不乱</h3>
         <p>只改窗口的矩形位置、<b>不动窗口状态</b>：最大化过去还是最大化，左右吸附过去仍是贴着边，相对位置逐像素对应。</p>
       </div>
@@ -300,7 +308,17 @@
 
       <div class="card">
         <h3><span class="ico"><svg viewBox="0 0 24 24"><rect x="2.5" y="7" width="12" height="10" rx="2"/><rect x="16" y="9.5" width="5.5" height="5" rx="1.5"/><path d="M14.5 12h1.5"/></svg></span>分辨率无关</h3>
-        <p>两块屏尺寸一致时<b>纯平移</b>，不缩放、不丢像素；尺寸不一致时自动等比缩放并夹进工作区。1080p / 1440p / 4K / 带鱼屏 / 横排竖排都适用。</p>
+        <p>两块屏尺寸一致时<b>纯平移</b>，不缩放、不丢像素；尺寸不一致时自动等比缩放并夹进工作区。1080p / 1440p / 4K / 带鱼屏 / 横排竖排都适用，而且<b>按「屏对」分别判断</b>。</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 9a8 8 0 0 1 13.5-3.5L20 8"/><path d="M20 4.5V8h-3.5"/><path d="M20 15a8 8 0 0 1-13.5 3.5L4 16"/><path d="M4 19.5V16h3.5"/></svg></span>换错了能换回来</h3>
+        <p>同尺寸屏之间是纯整数平移，所以再按一次热键就<b>逐像素还原</b>，等于白送一个撤销。两两互换时按钮直接写着「恢复原状」。</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3.2"/></svg></span>先预览，再动手</h3>
+        <p>点「预览计划」只会把表格里「互换后」那一列填上目标位置，<b>一个窗口都不动</b>。第一次用建议先看一眼再按热键。</p>
       </div>
 
       <div class="card">
@@ -316,16 +334,18 @@
 <section id="ui">
   <div class="wrap">
     <h2 class="sec-h">界面</h2>
-    <p class="sec-p">打开就能看到两块屏的实时信息、哪些窗口会被换到哪儿。第一次用建议先点「预览计划」。</p>
+    <p class="sec-p">打开就能看到每块屏的实时信息、哪些窗口会被换到哪儿。第一次用建议先点「预览计划」。</p>
     <div class="shot">
-      <img src="assets/gui.png" alt="双屏窗口互换 主界面：上方是两块显示器的信息卡片，中间是窗口列表和互换后的目标位置，下方是全局热键与选项">
+      <img src="assets/gui.png" alt="多屏窗口互换 主界面：上方是每块显示器的信息卡片和「送往」下拉，中间是窗口列表和互换后的目标位置，下方是全局热键与选项">
     </div>
-    <p class="shot-cap">上方两张卡片是两块屏（★ 为主屏）；中间表格的「互换后」列就是每个窗口的新位置</p>
+    <p class="shot-cap">每块屏一张卡片，「送往」下拉决定这块屏的窗口去哪；中间表格的「互换后」列就是每个窗口的新位置</p>
     <div class="ticks">
+      <div class="tick"><span class="ck">✓</span><span><b>每块屏一个「送往」</b> <span class="d">— 想怎么配就怎么配；没设定去向的屏，上面的窗口一个都不动。</span></span></div>
+      <div class="tick"><span class="ck">✓</span><span><b>环形轮转 / 两两互换 / 全部不动</b> <span class="d">— 三个预设一按就配好，不用一个个改下拉。</span></span></div>
       <div class="tick"><span class="ck">✓</span><span><b>预览计划（不改动）</b> <span class="d">— 先把「互换后」列填上目标位置，一个窗口都不动，确认无误再执行。</span></span></div>
-      <div class="tick"><span class="ck">✓</span><span><b>恢复原状（再按一次）</b> <span class="d">— 映射是可逆的，再换一次即可回到原位，同尺寸屏下逐像素还原。</span></span></div>
-      <div class="tick"><span class="ck">✓</span><span><b>排除的窗口标题</b> <span class="d">— 支持正则，例如 <code>.*Steam.*</code> 就永远不动标题里有 Steam 的窗口。</span></span></div>
-      <div class="tick"><span class="ck">✓</span><span><b>开机自动启动 + 启动时直接收进托盘</b> <span class="d">— 勾上这两项，开机后在托盘静默待命，需要时按个热键就行。</span></span></div>
+      <div class="tick"><span class="ck">✓</span><span><b>恢复原状（再换一次）</b> <span class="d">— 映射是可逆的，再换一次即可回到原位，同尺寸屏下逐像素还原。</span></span></div>
+      <div class="tick"><span class="ck">✓</span><span><b>互换完成后弹出提示</b> <span class="d">— 不想被打扰就关掉这个开关，互换会静默完成。</span></span></div>
+      <div class="tick"><span class="ck">✓</span><span><b>开机自动启动（开机后静默待在托盘）</b> <span class="d">— 勾上后开机就在托盘待命。手动双击启动时一定看得到界面，不会「点了没反应」。</span></span></div>
     </div>
   </div>
 </section>
@@ -365,6 +385,21 @@
       <div class="step">
         <div class="n">3</div>
         <div>
+          <h3>决定「哪块屏送往哪块屏」</h3>
+          <p>两块屏时这就是一个对换。多屏时用一个<b>排列</b>表示：<code>{源屏: 目标屏}</code>，
+          例如三块屏的环形轮转就是 <code>{1→2, 2→3, 3→1}</code>。
+          <b>没出现在排列里的屏，上面的窗口一个都不动</b> —— 所以你既能只动其中两块，
+          也能一次把所有屏重新分配。</p>
+          <p style="margin-top:10px">界面上每块屏的「送往」下拉就是在拼这个排列；命令行是
+          <code>--permute "1&gt;2,2&gt;3,3&gt;1"</code>（或 <code>--rotate 1,2,3</code>）。
+          不合法的排列（屏号越界、送往自己、两块屏挤到同一块目标屏）会被直接拒掉，
+          不会半个排列生效。</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="n">4</div>
+        <div>
           <h3>算新位置 —— 「布局不乱」的关键就在这两行</h3>
           <p>设源屏矩形 <code>src</code>、目标屏矩形 <code>dst</code>：</p>
 <pre><em># 两块屏尺寸相同：纯平移（整数加法，完全可逆）</em>
@@ -379,11 +414,20 @@ sx = dst.w / src.w      sy = dst.h / src.h
             属于数学上不可避免，所以只在两块屏尺寸不同时才自动启用。
             窗口如果被换到工作区之外（比如换到一块更小的屏），会被自动<b>夹回</b>可视范围内。
           </p>
+          <p style="margin-top:12px">
+            用哪种方式是<b>按「屏对」分别判断</b>的，不是一个全局开关：三块屏混排时，
+            <code>1→2</code> 可能走纯平移、<code>2→3</code> 走等比缩放。
+          </p>
+          <p style="margin-top:12px" class="warn-p">
+            ⚠️ 还有个容易踩的顺序问题：<b>必须先把所有窗口的目标位置算完，再统一落地</b>。
+            如果边遍历边移动，第二块屏上的窗口已经被搬到别处了，轮到它时读到的就是错的位置 ——
+            三个窗口会被全部堆到同一块屏上。
+          </p>
         </div>
       </div>
 
       <div class="step">
-        <div class="n">4</div>
+        <div class="n">5</div>
         <div>
           <h3>应用位置，最大化窗口要特殊照顾</h3>
           <p>普通窗口直接 <code>SetWindowPos</code> 就行。但<b>最大化窗口不能这么办</b>：
@@ -391,17 +435,26 @@ sx = dst.w / src.w      sy = dst.h / src.h
           明明改了，窗口却纹丝不动。必须走</p>
 <pre>SetWindowPlacement( SW_SHOWNOACTIVATE )  →  SetWindowPos( ... )  →  ShowWindow( SW_MAXIMIZE )</pre>
           <p style="margin-top:12px">这三步，并且会验证窗口中心确实落在了目标屏上，失败就重试一次。</p>
+          <p style="margin-top:12px">
+            原理是：Windows 用「窗口的<b>还原位置</b>落在哪块屏」来决定最大化时贴满哪块屏。
+            所以在原生 Windows 里你既拖不动也挪不动一个最大化窗口 —— 只能先取消最大化。
+            代价是互换瞬间最大化窗口会闪一下，这是绕开系统限制的唯一路径。
+          </p>
         </div>
       </div>
 
       <div class="step">
-        <div class="n">5</div>
+        <div class="n">6</div>
         <div>
           <h3>热键与托盘</h3>
           <p><code>RegisterHotKey</code> 注册全局热键，跑在一个带真消息泵的独立线程里。
           托盘图标用 <code>Shell_NotifyIconW</code>；注意<b>消息专用窗口（<code>HWND_MESSAGE</code>）收不到托盘回调</b>，
           所以这里建的是一个隐藏起来的普通顶层窗口。点 <code>✕</code> 时并不退出，而是把界面
           <code>withdraw()</code> 藏起来、热键继续有效 —— 这正是收进托盘之后热键依然能用的原因。</p>
+          <p style="margin-top:10px">
+            手动双击启动时<b>一定会把界面显示出来</b>（否则用户会以为程序没启动、点了没反应）。
+            只有「开机自动启动」那条路会在启动项里带上 <code>--minimized</code>，静默待在托盘里。
+          </p>
         </div>
       </div>
 
@@ -414,7 +467,8 @@ sx = dst.w / src.w      sy = dst.h / src.h
   <div class="wrap">
     <div class="dl">
       <h2>下载</h2>
-      <p>单文件、免安装，下载后双击运行。首次启动会常驻托盘，按 <b>Ctrl+Alt+S</b> 即可互换。</p>
+      <p>单文件、免安装，下载后双击运行。首次启动会<b>直接显示界面</b>，按 <b>Ctrl+Alt+S</b> 即可互换；
+      点 <code>✕</code> 才会收进托盘。</p>
       <a class="btn btn-p" href="https://github.com/DC1024/swap-monitors/releases/latest/download/SwapMonitors.exe" style="font-size:16px;padding:13px 26px">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
@@ -456,8 +510,13 @@ python swap_windows.py --list</pre>
         <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M5 12.5 9.5 17 19 7.5"/></svg></span>跑一遍自测</h3>
         <p>映射逻辑的测试是纯数学的，任何机器都能跑；界面验收那条会真的移动窗口、发真热键，跑之前先存一下手头的东西。</p>
 <pre>python tests/test_map.py
+python tests/test_arrange.py
+python tests/test_selftest.py
+python tests/test_maximized.py
 python tests/verify_gui.py
-    --hotkey --tray</pre>
+    --hotkey --tray --min-check</pre>
+        <p style="margin-top:12px">验收脚本刻意<b>不用 Ctrl+Alt+S</b>（那是正式版的键，很可能正被你自己那个实例占着），
+        用的是 Ctrl+Alt+F9；配置也走独立的临时文件，不会碰你的真实设置。</p>
       </div>
     </div>
   </div>
@@ -487,15 +546,39 @@ python tests/verify_gui.py
 
     <details>
       <summary>两块屏分辨率不一样怎么办？</summary>
-      <p>默认会自动切换到<b>等比缩放</b>模式，并按目标屏的工作区做边界夹取，保证换过去之后没有窗口跑到屏幕外面。
-      如果你更希望「尺寸原样搬过去」（宁可超出边界），把「两屏分辨率不同时等比缩放」的勾去掉就是纯平移模式。</p>
+      <p>会自动对这一对屏切换到<b>等比缩放</b>模式，并按目标屏的工作区做边界夹取，保证换过去之后没有窗口跑到屏幕外面。
+      如果你更希望「尺寸原样搬过去」（宁可超出边界），把「分辨率不同的屏之间等比缩放」的勾去掉就是纯平移模式。</p>
+      <p style="margin-top:10px">注意抓取用的是<b>物理像素</b>。如果两块屏的缩放百分比不同（比如一块 100%、一块 150%），
+      「像素级布局完全不变」在原理上就无法严格成立 —— 这种情况我们没有在真机上验证过。</p>
     </details>
 
     <details>
       <summary>支持三块以上的屏幕吗？</summary>
-      <p>一次只处理两块屏，这符合绝大多数「A 屏 ↔ B 屏 对调」的场景。
-      如果你有三块屏，可以用 <code>--monitors 1,3</code> 指定这次要动哪两块。
-      多屏两两互换的场景暂时没做。</p>
+      <p>支持。界面上每块屏都有自己的「送往」下拉，你可以随便配：三块屏环形轮转
+      （<code>1→2→3→1</code>）、只换其中两块、或者一次配好几对。
+      <b>没设定去向的屏，上面的窗口一个都不动。</b></p>
+      <p style="margin-top:10px">命令行里对应 <code>--rotate 1,2,3</code>（环形轮转，或者不带屏号 = 全部屏按顺序轮）
+      和 <code>--permute "1&gt;2,2&gt;3,3&gt;1"</code>（任意排列）。
+      三块屏的轮转要按 3 次才回到原位 —— 界面上按钮会相应写成「再轮转一次」，不会骗你说按一次就回去。</p>
+    </details>
+
+    <details>
+      <summary>最大化的窗口能搬走吗？</summary>
+      <p>能。但这不是「直接移动」—— 在 Windows 上你既拖不动也挪不动一个最大化窗口，
+      给它 <code>SetWindowPos</code> 会被系统立刻按「贴满本屏」重排、弹回原来那块屏。</p>
+      <p style="margin-top:10px">可行路径只有一条：<b>先取消最大化 → 把「还原位置」改到目标屏 → 在新屏重新最大化</b>。
+      工具走的就是这条，并会在做完之后验证窗口中心确实落在目标屏上，失败会重试一次。
+      代价是互换瞬间最大化窗口会闪一下。</p>
+      <p style="margin-top:10px">另外如果你两块屏分辨率相同、又都是最大化窗口，换完看上去「还是满屏」，
+      容易误以为没动 —— 其实两块屏上的应用已经对调了。</p>
+    </details>
+
+    <details>
+      <summary>点 ✕ 之后程序是不是没了？</summary>
+      <p>没有，<code>✕</code> 是<b>收进系统托盘</b>，不是退出。热键继续有效，左键点托盘图标可以唤回界面，
+      右键有「互换 / 显示 / 退出」。第一次收进托盘时会弹个气泡告诉你这件事。</p>
+      <p style="margin-top:10px">反过来，<b>手动双击启动时一定会显示界面</b>，不会静默躲进托盘 ——
+      只有「开机自动启动」那条路才是静默的。</p>
     </details>
 
     <details>
@@ -516,7 +599,7 @@ python tests/verify_gui.py
 <footer>
   <div class="wrap foot-in">
     <img src="assets/icon.png" alt="" style="width:24px;height:24px;border-radius:6px">
-    <span>双屏窗口互换 · MIT License</span>
+    <span>多屏窗口互换 · MIT License</span>
     <span class="nav-sp"></span>
     <a href="https://github.com/DC1024/swap-monitors">GitHub 仓库</a>
     <a href="https://github.com/DC1024/swap-monitors/releases">版本发布</a>

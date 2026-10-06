@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-swap_gui.py —— 双屏窗口互换（图形界面 + 全局热键）
+swap_gui.py —— 多屏窗口互换（图形界面 + 全局热键）
 
 界面里能看：两块屏信息、当前会被互换的窗口清单、互换预览。
 点一下就能换，也能绑一个全局热键（默认 Ctrl+Alt+S）随时换。
@@ -25,8 +25,10 @@ from tkinter import ttk
 
 import swap_windows as sw
 
-APP_TITLE = "双屏窗口互换"
-APP_VER = "1.0"
+APP_TITLE = "多屏窗口互换"
+APP_VER = "1.1"
+# 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
+# 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")
 # 允许用环境变量指向别的配置文件（自动化测试必须用它，避免覆盖用户真实设置）
 CFG_PATH = os.environ.get("SWAPMONITORS_CONFIG") or os.path.join(CFG_DIR, "config.json")
@@ -41,8 +43,12 @@ DEFAULT_CFG = {
     "scale": False,
     "restore_focus": True,
     "autostart": False,
-    "start_minimized": False,
+    "notify_on_swap": True,     # 互换完成后是否弹托盘气泡
+    "permute": None,            # {"1": 2, "2": 1} 这样的「哪块屏送往哪块屏」；None = 默认行为
 }
+# 注意：这里没有 start_minimized。
+# 「手动双击也要收进托盘」是个坑 —— 用户会以为程序没启动。现在只有开机自启
+# 那一项（启动项里带 --minimized）才会静默进托盘，手动启动一律把界面显示出来。
 
 # ---- 配色：浅色 + 蓝色科技感 ----
 C_BG, C_CARD, C_LINE = "#f4f7fb", "#ffffff", "#d8e2f0"
@@ -516,6 +522,8 @@ class App:
         self.tray_hint_shown = False
         self.tray_ok = False       # Shell_NotifyIcon(NIM_ADD) 是否成功
         self._hiding = False       # 防止 <Unmap> 递归
+        self.perm = {}             # {源屏(1起): 目标屏(1起)} 哪块屏送往哪块屏
+        self._perm_n = None        # 上次初始化排列时的屏数，屏数变了要重新校验
 
         root.title(f"{APP_TITLE} v{APP_VER}")
         root.configure(bg=C_BG)
@@ -524,18 +532,35 @@ class App:
 
         self._build()
         self.update_perm_label()
-        # 高度必须按实际内容量算，否则 geometry() 会把底部选项和状态栏裁掉
-        self.root.update_idletasks()
-        w = max(980, self.root.winfo_reqwidth() + 4)
-        h = self.root.winfo_reqheight() + 4
-        self.root.minsize(w, h)
-        self._center(w, h)
         self.root.after(80, self._poll)
         self.refresh()
+        # 尺寸校正一定要放在 refresh() 之后：refresh() 会改「共 N 个窗口」那行文字，
+        # 行高/换行一变，底部选项的位置就跟着变。顺序反了窗口就矮一截。
+        self._fit()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Unmap>", self._on_unmap)
 
     # ---------- 外观 ----------
+    def _fit(self, recenter=True):
+        """按实际内容把窗口调到刚好的大小，并给出最小值。
+
+        为什么要单独抽成方法、还允许重复调用：
+          1. 内容高度是**长出来的**。refresh() 会改「共 N 个窗口」那行、start_hotkey()
+             会往状态栏写「✓ 已注册…」，这些都会把底部那排选项往下推。在它们之前量
+             一次，窗口就会矮一截 —— 实测差 100px 上下，底部的开关直接被裁掉。
+          2. 窗口处于 withdraw 状态时几何请求会被忽略（geometry() 形同虚设），
+             所以从托盘恢复显示之后必须再校正一次，否则弹出来是个小方块。
+        """
+        self.root.update_idletasks()
+        w = max(980, self.root.winfo_reqwidth() + 4)
+        h = self.root.winfo_reqheight() + 4
+        self.root.minsize(w, h)
+        if recenter:
+            self._center(w, h)
+        else:                       # 只改尺寸，别把用户挪过的位置又拉回屏幕正中
+            self.root.geometry(f"{w}x{h}")
+        return w, h
+
     def _center(self, w, h):
         sw_, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         self.root.geometry(f"{w}x{h}+{(sw_ - w) // 2}+{max(0, (sh - h) // 2 - 20)}")
@@ -594,7 +619,7 @@ class App:
         head = ttk.Frame(self.root)
         head.pack(fill="x", padx=18, pady=(16, 10))
         ttk.Label(head, text=APP_TITLE, style="Title.TLabel").pack(side="left")
-        ttk.Label(head, text="  把两块屏上的窗口整体互换，相对布局原样保留",
+        ttk.Label(head, text="  把屏幕上的窗口整体互换，相对布局原样保留",
                   style="Sub.TLabel").pack(side="left", pady=(6, 0))
         # 权限状态 + 提权按钮（放最显眼的位置）
         self.elev_btn = ttk.Button(head, text="以管理员身份重启", command=self.elevate)
@@ -602,21 +627,20 @@ class App:
         self.perm_lbl = ttk.Label(head, text="", style="Sub.TLabel")
         self.perm_lbl.pack(side="right", padx=(0, 10), pady=(6, 0))
 
-        # 显示器卡片
+        # 显示器卡片（每块屏一个「送往 →」下拉，屏数不限）
         self.cards = ttk.Frame(self.root)
         self.cards.pack(fill="x", padx=18)
         self.card_widgets = []
-        for _ in range(2):
-            f = ttk.Frame(self.cards, style="Card.TFrame", padding=14)
-            f.pack(side="left", fill="both", expand=True, padx=(0, 10))
-            name = ttk.Label(f, text="—", style="Card.TLabel", font=(FONT, 11, "bold"))
-            name.pack(anchor="w")
-            info = ttk.Label(f, text="", style="Dim.TLabel")
-            info.pack(anchor="w", pady=(4, 0))
-            self.card_widgets.append((name, info))
-        self.swap_arrow = ttk.Label(self.cards, text="⇄", style="Dim.TLabel",
-                                    font=(FONT, 20))
-        self.swap_arrow.place(relx=0.5, rely=0.5, anchor="center")
+
+        pre = ttk.Frame(self.root)
+        pre.pack(fill="x", padx=18, pady=(8, 0))
+        ttk.Label(pre, text="每块屏的窗口送往：", style="Sub.TLabel").pack(side="left")
+        for text, fn in (("环形轮转", self.preset_rotate),
+                         ("两两互换", self.preset_pair),
+                         ("全部不动", self.preset_none)):
+            ttk.Button(pre, text=text, width=9, command=fn).pack(side="left", padx=(8, 0))
+        self.perm_hint = ttk.Label(pre, text="", style="Sub.TLabel")
+        self.perm_hint.pack(side="right")
 
         # 中部：窗口清单
         mid = ttk.Frame(self.root)
@@ -672,21 +696,20 @@ class App:
         self.ex_var = tk.StringVar(value=self.cfg["exclude_title"])
         ttk.Entry(ex, textvariable=self.ex_var, font=(FONT, 9)).pack(
             fill="x", pady=(6, 0), ipady=3)
-        self.ex_var.trace_add("write", lambda *_: self._save())
 
         opts = ttk.Frame(left)
         opts.pack(fill="x", pady=(12, 0))
         self.skipmin_var = tk.BooleanVar(value=self.cfg["skip_minimized"])
         self.scale_var = tk.BooleanVar(value=self.cfg["scale"])
         self.focus_var = tk.BooleanVar(value=self.cfg["restore_focus"])
+        self.notify_var = tk.BooleanVar(value=self.cfg["notify_on_swap"])
         self.auto_var = tk.BooleanVar(value=self.cfg["autostart"])
-        self.startmin_var = tk.BooleanVar(value=self.cfg["start_minimized"])
         for var, text, cmd in (
                 (self.skipmin_var, "跳过最小化窗口", self._save),
-                (self.scale_var, "两屏分辨率不同时等比缩放", self._save),
+                (self.scale_var, "分辨率不同的屏之间等比缩放（否则纯平移）", self._save),
                 (self.focus_var, "互换后把焦点还给原来的窗口", self._save),
-                (self.auto_var, "开机自动启动（常驻热键）", self.set_autostart),
-                (self.startmin_var, "启动时直接收进托盘（不占任务栏）", self._save)):
+                (self.notify_var, "互换完成后弹出提示（托盘气泡）", self._save),
+                (self.auto_var, "开机自动启动（开机后静默待在托盘）", self.set_autostart)):
             Toggle(opts, text, var, cmd).pack(anchor="w", pady=1)
 
         right = ttk.Frame(bot)
@@ -695,12 +718,16 @@ class App:
                    command=lambda: self.do_swap()).pack(fill="x")
         ttk.Button(right, text="预览计划（不改动）",
                    command=lambda: self.do_swap(dry=True)).pack(fill="x", pady=(8, 0))
-        ttk.Button(right, text="恢复原状（再换一次）",
-                   command=lambda: self.do_swap()).pack(fill="x", pady=(8, 0))
+        self.redo_btn = ttk.Button(right, text="恢复原状（再换一次）",
+                                   command=lambda: self.do_swap())
+        self.redo_btn.pack(fill="x", pady=(8, 0))
         ttk.Button(right, text="退出", command=self.quit_app).pack(fill="x", pady=(8, 0))
 
         self.status = ttk.Label(self.root, text="就绪", style="Sub.TLabel")
         self.status.pack(fill="x", padx=18, pady=(0, 10))
+
+        # 放到最后再挂：_save() 要用到上面所有变量，早挂会有初始化顺序问题
+        self.ex_var.trace_add("write", lambda *_: self._save())
 
     # ---------- 热键 / 托盘 ----------
     def start_hotkey(self):
@@ -849,34 +876,186 @@ class App:
             return
         self.mons = data.get("monitors", [])
         self.wins = data.get("windows", [])
-        pair = data.get("swap_pair", [1, 2])
-        for i, (name, info) in enumerate(self.card_widgets):
-            if i < len(self.mons):
-                m = self.mons[i]
-                tag = ["①", "②"][i]
-                star = "　★主屏" if m["primary"] else ""
-                dev = m["device"].split("\\")[-1]
-                name.configure(text=f"{tag}　{dev}　屏 {m['index']}{star}")
-                info.configure(text=f"{m['width']}×{m['height']}　　左 {m['left']}, 上 {m['top']}"
-                                    f"{'　　← 参与互换' if m['index'] in pair else ''}")
+        self._ensure_perm()          # 屏数变了要重新校验老的映射
+        self._sync_cards()
         self.tree.delete(*self.tree.get_children())
         for i, w in enumerate(sorted(self.wins, key=lambda x: (x["monitor"] or 9, x["left"]))):
             self.tree.insert("", "end", values=(
                 f"屏{w['monitor']}", w["state"],
                 f"{w['left']},{w['top']}  {w['width']}×{w['height']}",
                 w["proc"] or "（管理员进程）", w["title"], ""), tags=("odd",) if i % 2 else ())
-        self.count_lbl.configure(text=f"共 {len(self.wins)} 个窗口　·　"
-                                     f"映射方式：{'等比缩放' if self._use_scale() else '纯平移'}")
+        self.count_lbl.configure(text=f"共 {len(self.wins)} 个窗口　·　{self._map_desc()}")
         self.set_status("已刷新")
         return data
 
-    def _use_scale(self):
-        if self.scale_var.get():
-            return True
-        if len(self.mons) >= 2:
-            a, b = self.mons[0], self.mons[1]
-            return (a["width"], a["height"]) != (b["width"], b["height"])
-        return False
+    # ---------- 排列编辑器 ----------
+    CARD_COLS = 2
+    MARKS = "①②③④⑤⑥⑦⑧⑨⑩"
+
+    def _map_desc(self):
+        """映射方式说明。按对判断 —— 多屏混排时不同屏对的方式可能不一样。"""
+        if not self.perm:
+            return "没有任何屏参与（全部不动）"
+        forced = bool(self.scale_var.get())
+        n = n_scale = 0
+        for s, d in self.perm.items():
+            if not (1 <= s <= len(self.mons) and 1 <= d <= len(self.mons)):
+                continue
+            a, b = self.mons[s - 1], self.mons[d - 1]
+            n += 1
+            if forced or (a["width"], a["height"]) != (b["width"], b["height"]):
+                n_scale += 1
+        if not n:
+            return "没有任何屏参与（全部不动）"
+        if n_scale == 0:
+            return f"{n} 对全为纯平移"
+        if n_scale == n:
+            return f"{n} 对全为等比缩放"
+        return f"{n} 对中 {n_scale} 对缩放、{n - n_scale} 对平移"
+
+    def _is_involution(self):
+        """排列是不是「自逆」的 —— 即作用两次回到原状（对换就是这样）。
+
+        只有这种情况才可以说「再按一次换回」。三屏轮转 {1:2,2:3,3:1} 要转满 3 次才复位。
+        """
+        if not self.perm:
+            return False
+        return all(self.perm.get(d) == s for s, d in self.perm.items())
+
+    def _ensure_perm(self):
+        if self._perm_n == len(self.mons):
+            return
+        self._perm_n = len(self.mons)
+        self.perm = self._load_perm(len(self.mons))
+        self.cfg["permute"] = {str(k): v for k, v in sorted(self.perm.items())}
+
+    def _load_perm(self, n):
+        """读配置里的排列；任何一项不合法（屏号越界、目标重复）就整体退回默认。"""
+        default = {1: 2, 2: 1} if n >= 2 else {}
+        raw = self.cfg.get("permute")
+        if not isinstance(raw, dict):
+            return dict(default)
+        perm = {}
+        for k, v in raw.items():
+            try:
+                s, d = int(k), int(v)
+            except (TypeError, ValueError):
+                return dict(default)
+            if not (1 <= s <= n and 1 <= d <= n) or s == d:
+                return dict(default)
+            perm[s] = d
+        if len(set(perm.values())) != len(perm):     # 多块屏挤到同一块目标屏
+            return dict(default)
+        return perm
+
+    def _sync_cards(self):
+        """按屏数建/更新卡片。屏数变了才重建控件，否则只刷新文字和下拉项。"""
+        n = len(self.mons)
+        if n != len(self.card_widgets):
+            for w in self.cards.winfo_children():
+                w.destroy()
+            self.card_widgets = []
+            cols = min(self.CARD_COLS, max(1, n))
+            for i in range(n):
+                f = ttk.Frame(self.cards, style="Card.TFrame", padding=12)
+                f.grid(row=i // cols, column=i % cols, sticky="nsew",
+                       padx=(0 if i % cols == 0 else 10, 0), pady=(0, 8))
+                tag = ttk.Label(f, text="—", style="Card.TLabel", font=(FONT, 11, "bold"))
+                tag.pack(anchor="w")
+                info = ttk.Label(f, text="", style="Dim.TLabel", font=(FONT, 9))
+                info.pack(anchor="w", pady=(3, 0))
+                r = ttk.Frame(f, style="Card.TFrame")
+                r.pack(fill="x", pady=(9, 0))
+                ttk.Label(r, text="送往", style="Dim.TLabel").pack(side="left")
+                var = tk.StringVar()
+                cb = ttk.Combobox(r, textvariable=var, state="readonly", width=10,
+                                  font=(FONT, 9))
+                cb.pack(side="left", padx=(7, 0), fill="x", expand=True)
+                cb.bind("<<ComboboxSelected>>", lambda e, i=i: self._on_perm_change(i))
+                self.card_widgets.append({"frame": f, "tag": tag, "info": info,
+                                          "var": var, "combo": cb})
+            for c in range(cols):
+                self.cards.columnconfigure(c, weight=1)
+
+        for i, cw in enumerate(self.card_widgets):
+            m = self.mons[i]
+            mark = self.MARKS[i] if i < len(self.MARKS) else f"({i + 1})"
+            star = "　★主屏" if m["primary"] else ""
+            dev = m["device"].split("\\")[-1]
+            dest = self.perm.get(i + 1)
+            cw["tag"].configure(text=f"{mark}　{dev}{star}")
+            cw["info"].configure(
+                text=f"{m['width']}×{m['height']}　　左 {m['left']}, 上 {m['top']}"
+                     + (f"　→　送往 屏{dest}" if dest else "　→　不动（不参与）"))
+            cw["combo"].configure(values=["不动"] + [f"屏{j + 1}" for j in range(n) if j != i])
+            cw["var"].set(f"屏{dest}" if dest else "不动")
+
+        self.perm_hint.configure(
+            text="全部不动：按热键不会有任何窗口被移动" if not self.perm
+            else "、".join(f"屏{s}→屏{d}" for s, d in sorted(self.perm.items())))
+        # 「恢复原状」只在对换时成立；轮转要说「再转一次」
+        self.redo_btn.configure(
+            text="恢复原状（再换一次）" if self._is_involution() else "再轮转一次")
+
+    def _on_perm_change(self, idx):
+        """用户改了某块屏的去向。同一块目标屏不能被两块源屏选走，撞车就把先来的让开。"""
+        just = idx + 1
+        chosen = {}
+        for i, cw in enumerate(self.card_widgets):
+            v = cw["var"].get()
+            if v.startswith("屏"):
+                try:
+                    chosen[i + 1] = int(v[1:])
+                except ValueError:
+                    pass
+        final, note = {}, None
+        for s in sorted(chosen, key=lambda k: (k != just, k)):
+            d = chosen[s]
+            if d == s:               # 送往自己 = 不动。下拉里不会给出这种选项，
+                continue             # 但配置可能被手改坏，兜一下免得把自环送给引擎
+            owner = next((k for k, v in final.items() if v == d), None)
+            if owner is not None:
+                note = f"屏{d} 已被屏{owner} 选为目标，屏{s} 改为不动"
+                continue
+            final[s] = d
+        self.perm = final
+        self.cfg["permute"] = {str(k): v for k, v in sorted(final.items())}
+        self._save()
+        if note:
+            self.set_status(note)
+        self.root.after(60, self.refresh)     # 等下拉收起再重建，避免自己销毁自己
+
+    def _apply_perm(self, perm, msg):
+        n = len(self.mons)
+        clean, seen = {}, set()
+        for s in sorted(perm):
+            d = perm[s]
+            if not (1 <= s <= n and 1 <= d <= n) or s == d or d in seen:
+                continue
+            clean[s] = d
+            seen.add(d)
+        self.perm = clean
+        self.cfg["permute"] = {str(k): v for k, v in sorted(clean.items())}
+        self._save()
+        self.set_status(msg)
+        self.refresh()
+
+    def preset_rotate(self):
+        n = len(self.mons)
+        if n < 2:
+            self.set_status("只有一块屏，无法轮转")
+            return
+        self._apply_perm({i + 1: (i + 1) % n + 1 for i in range(n)},
+                         "已设为环形轮转：" + "→".join(f"屏{i + 1}" for i in range(n)) + "→屏1")
+
+    def preset_pair(self):
+        if len(self.mons) < 2:
+            self.set_status("只有一块屏，无法互换")
+            return
+        self._apply_perm({1: 2, 2: 1}, "已设为互换最左两块，其余不动")
+
+    def preset_none(self):
+        self._apply_perm({}, "已设为全部不动")
 
     def _make_args(self, dry=False):
         class A:
@@ -885,6 +1064,9 @@ class App:
         a.list = False
         a.dry_run = dry
         a.monitors = None
+        a.rotate = None
+        # "" 是合法的排列写法，表示「全部不动」；None 才是「没指定、用默认」
+        a.permute = ",".join(f"{s}>{d}" for s, d in sorted(self.perm.items()))
         a.scale = bool(self.scale_var.get())
         a.translate_only = False
         a.exclude_title = self.ex_var.get().strip() or None
@@ -966,9 +1148,13 @@ class App:
         moved = data.get("moved", 0)
         self.refresh()          # 注意顺序：refresh 会写状态栏，完成提示要放在它后面
         msg = f"完成：{moved} 个窗口已互换" + ("（本次没有匹配的窗口）" if not moved else "")
-        self.set_status(msg + "　·　再按一次热键即可换回")
-        if self.hidden and self.hk:
-            self.hk.notify(APP_TITLE, msg + "\n再按一次热键即可换回")
+        # 只有「对换」（排列是自逆的，作用两次回到原状）才谈得上「再按一次换回」；
+        # 三屏轮转要按满一圈才复位，说「再按一次换回」是错的
+        tail = ("再按一次热键即可换回" if self._is_involution()
+                else "这是多屏轮转，继续按热键会一圈一圈地换下去")
+        self.set_status(f"{msg}　·　{tail}")
+        if self.hidden and self.hk and self.notify_var.get():
+            self.hk.notify(APP_TITLE, f"{msg}\n{tail}")
 
     # ---------- 事件循环 ----------
     def _poll(self):
@@ -1025,9 +1211,12 @@ class App:
             "scale": bool(self.scale_var.get()),
             "restore_focus": bool(self.focus_var.get()),
             "autostart": bool(self.auto_var.get()),
-            "start_minimized": bool(self.startmin_var.get()),
+            "notify_on_swap": bool(self.notify_var.get()),
+            "permute": {str(k): v for k, v in sorted(self.perm.items())},
         })
-        save_cfg(self.cfg)
+        # 只落已知的键 —— 顺便把老版本留下的 start_minimized 之类陈旧配置清掉，
+        # 否则它会一直躺在那儿让人误以为是有效的设置
+        save_cfg({k: self.cfg[k] for k in DEFAULT_CFG if k in self.cfg})
 
     def on_close(self):
         """点 X：收进托盘（不占任务栏），热键继续有效。"""
@@ -1069,6 +1258,9 @@ class App:
         try:
             self.root.deiconify()
             self.root.state("normal")
+            # 隐藏期间 geometry 请求是被忽略的（开机自启那条路就是这样进来的），
+            # 所以亮出来之后补一次尺寸校正，免得弹出来是个小方块。
+            self._fit(recenter=False)
             self.root.lift()
             self.root.attributes("-topmost", True)
             self.root.after(300, lambda: self.root.attributes("-topmost", False))
@@ -1115,18 +1307,29 @@ def run_with_args(ns):
 
 def main():
     argv = sys.argv[1:]
+    # --minimized 只由「开机自启」那个启动项传进来。
+    # 手动双击**不带**这个参数，所以一定会看到界面 —— 不会出现「点了没反应、
+    # 以为没启动」的情况。用户点 X 之后才收进托盘。
     startup_min = "--minimized" in argv
     argv = [a for a in argv if a != "--minimized"]
     if argv:                       # 带实际参数 → 命令行模式，透传给核心脚本
         return sw.main(argv)
 
     root = tk.Tk()
+    # 先藏起来再建界面。
+    # 因为 App.__init__ 里为了量高度会调 update_idletasks()，那一下会把窗口映射出来，
+    # 于是开机自启时会闪过一个窗口才收进托盘。先 withdraw 就彻底不闪。
+    root.withdraw()
     app = App(root)
     app.start_hotkey()
-    if startup_min or app.cfg.get("start_minimized"):
-        root.withdraw()          # 直接收进托盘
-        app.hidden = True
+    if startup_min:
+        app.hidden = True            # 开机自启：静默待在托盘里
         app.tray_hint_shown = True
+    else:
+        root.deiconify()             # 手动启动：一定把界面亮出来
+    # start_hotkey() 会往状态栏写「✓ 已注册…」，内容高度又变了，
+    # 所以显示出来之后必须再校正一次尺寸（否则底部选项被裁）。
+    app._fit()
     root.mainloop()
     return 0
 

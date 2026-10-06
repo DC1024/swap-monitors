@@ -329,6 +329,62 @@ def clamp_into(r, area):
     return RECT(left, top, left + w, top + h)
 
 
+def fully_outside(r, area):
+    """矩形是否与目标屏**完全不相交**（这种窗口用户会以为丢了，必须救回来）。"""
+    return (r.right <= area.left or r.left >= area.right
+            or r.bottom <= area.top or r.top >= area.bottom)
+
+
+def pair_mode(src, dst, mode="auto"):
+    """按 (源, 目标) 这一对决定映射方式。
+
+    不能全局用一个开关：四块屏混排时，屏1→屏2 可能要缩放，而屏1→屏3 恰好同尺寸
+    只需平移。多屏下「按对判断」才是对的。
+    """
+    if mode in ("scale", "translate"):
+        return mode
+    return ("translate" if (src.rect.width, src.rect.height)
+            == (dst.rect.width, dst.rect.height) else "scale")
+
+
+def parse_permute(spec, n):
+    """解析 '1>2,2>3,3>1' → {0: 1, 1: 2, 2: 0}（内部索引用 0 起）。
+
+    规则：编号 1 起、源的编号不得重复、目标的编号也不得重复（否则多个屏的窗口会
+    挤到同一块屏上）。空串是合法的，表示「都不动」。非法就抛 ValueError。
+    """
+    perm = {}
+    for part in re.split(r"[,\s]+", (spec or "").strip()):
+        if not part:
+            continue
+        m = re.match(r"^(\d+)\s*>\s*(\d+)$", part)
+        if not m:
+            raise ValueError(f"看不懂这一段：{part!r}（应形如 1>2）")
+        s, d = int(m.group(1)) - 1, int(m.group(2)) - 1
+        if not (0 <= s < n and 0 <= d < n):
+            raise ValueError(f"屏号 {s + 1}>{d + 1} 超出范围（本机有 {n} 块屏）")
+        if s == d:
+            raise ValueError(f"屏{s + 1} 不能送往自己")
+        if s in perm:
+            raise ValueError(f"屏{s + 1} 指定了两次")
+        perm[s] = d
+    dsts = list(perm.values())
+    if len(set(dsts)) != len(dsts):
+        dup = [d + 1 for d in dsts if dsts.count(d) > 1]
+        raise ValueError(f"屏{sorted(set(dup))[0]} 被多块屏同时选为目标，会挤在一起")
+    return perm
+
+
+def rotate_perm(order):
+    """[0,1,2] → {0:1, 1:2, 2:0}，即「窗口沿这个顺序往前推一格」。"""
+    return {order[i]: order[(i + 1) % len(order)] for i in range(len(order))}
+
+
+def perm_to_spec(perm):
+    """{0:1, 1:0} → '1>2,2>1'。"""
+    return ",".join(f"{s + 1}>{d + 1}" for s, d in sorted(perm.items()))
+
+
 def _center_in(r, area):
     cx, cy = (r.left + r.right) // 2, (r.top + r.bottom) // 2
     return area.left <= cx < area.right and area.top <= cy < area.bottom
@@ -393,16 +449,47 @@ def swap(args):
         print("只检测到 1 块显示器，无法互换。", file=sys.stderr)
         return 1
 
-    if args.monitors:
-        try:
-            idx = [int(x) - 1 for x in args.monitors.split(",")]
-            assert len(idx) == 2 and all(0 <= i < len(monitors) for i in idx)
-        except Exception:
-            print("--monitors 参数应为两块屏的编号，例如 --monitors 1,2", file=sys.stderr)
-            return 1
-        a, b = monitors[idx[0]], monitors[idx[1]]
-    else:
-        a, b = monitors[0], monitors[1]
+    n = len(monitors)
+
+    def bad(msg):
+        print(msg, file=sys.stderr)
+        return 1
+
+    # ---- 先把「哪块屏 → 哪块屏」的排列解析出来 ----
+    # perm 的键是源屏（0 起），值=目标屏。两块屏时它就是一次互换。
+    try:
+        if getattr(args, "permute", None) is not None:
+            perm = parse_permute(args.permute, n)         # "" 合法 = 都不动
+        elif getattr(args, "rotate", None) is not None:
+            spec = args.rotate
+            if spec in ("*", ""):
+                order = list(range(n))
+            else:
+                raw = [x for x in re.split(r"[,\s]+", spec) if x.strip()]
+                try:
+                    order = [int(x) - 1 for x in raw]
+                except ValueError:
+                    return bad(f"--rotate 的屏号必须是数字：{spec!r}")
+                if any(not (0 <= i < n) for i in order):
+                    return bad(f"--rotate 的屏号超出范围（本机有 {n} 块屏）")
+                if len(set(order)) != len(order):
+                    return bad("--rotate 的屏号有重复")
+            if len(order) < 2:
+                return bad("--rotate 至少需要两块屏")
+            perm = rotate_perm(order)
+        elif args.monitors:
+            raw = [x for x in re.split(r"[,\s]+", args.monitors) if x.strip()]
+            try:
+                idx = [int(x) - 1 for x in raw]
+            except ValueError:
+                return bad(f"--monitors 的屏号必须是数字：{args.monitors!r}")
+            if len(idx) != 2 or any(not (0 <= i < n) for i in idx) or idx[0] == idx[1]:
+                return bad("--monitors 应为两块不同的屏，例如 --monitors 1,2")
+            perm = {idx[0]: idx[1], idx[1]: idx[0]}
+        else:
+            perm = {0: 1, 1: 0}       # 不带参数：沿用老行为，互换最左两块
+    except ValueError as e:
+        return bad(str(e))
 
     skip = DEFAULT_SKIP_TITLE
     if args.exclude_title:
@@ -433,7 +520,9 @@ def swap(args):
             print(json.dumps({
                 "ok": True, "dpi_mode": DPI_MODE,
                 "monitors": [mon_json(i, m) for i, m in enumerate(monitors)],
-                "swap_pair": [monitors.index(a) + 1, monitors.index(b) + 1],
+                "mapping": [{"from": s + 1, "to": d + 1} for s, d in sorted(perm.items())],
+                # swap_pair 是旧字段，两块屏时仍给出，老脚本不至于断
+                "swap_pair": sorted(s + 1 for s in perm) if len(perm) == 2 else [],
                 "windows": [{
                     "monitor": (w.mon + 1) if w.mon is not None else None,
                     "state": w.state_name(), "title": w.title, "proc": w.proc,
@@ -445,7 +534,7 @@ def swap(args):
         print(f"DPI 感知模式: {DPI_MODE}\n")
         print("=== 显示器 ===")
         for i, m in enumerate(monitors):
-            mark = "  <== 参与互换" if m in (a, b) else ""
+            mark = f"  <== 送往 屏{perm[i] + 1}" if i in perm else ""
             print(f"  [{i + 1}] {m.label}  区域 {m.rect.as_tuple()}  "
                   f"{m.rect.width}x{m.rect.height}{mark}")
         print(f"\n=== 会被互换的窗口（{len(wins)} 个）===")
@@ -455,36 +544,49 @@ def swap(args):
                   f"{(w.proc or '管理员进程?'):<22s} {w.title[:48]!r}")
         return 0
 
-    ia, ib = monitors.index(a), monitors.index(b)
     mode = "scale" if args.scale else ("translate" if args.translate_only else "auto")
+
+    # 先把**全部**目标位置算完再统一落地。多屏轮转必须这样：否则屏1 的窗口搬到屏2 后，
+    # 处理屏2 时会被当成屏2 的窗口再搬一次，级联堆到同一块屏上。
     plan = []
     for w in wins:
-        if w.mon == ia:
-            src, dst = a, b
-        elif w.mon == ib:
-            src, dst = b, a
-        else:
-            continue  # 第三块屏/未知屏：不动
+        if w.mon is None or w.mon not in perm:
+            continue                     # 没被指定去向的屏：一个窗口都不动
+        si, di = w.mon, perm[w.mon]
+        src, dst = monitors[si], monitors[di]
         # 最大化/最小化窗口用"还原位置"参与映射，状态才不会丢
-        base = w.place.rcNormalPosition if w.state in (SW_SHOWMINIMIZED, SW_SHOWMAXIMIZED) else w.rect
-        target = map_rect(base, src, dst, mode)
-        if mode == "scale":
+        base = (w.place.rcNormalPosition
+                if w.state in (SW_SHOWMINIMIZED, SW_SHOWMAXIMIZED) else w.rect)
+        pm = pair_mode(src, dst, mode)   # 按对判断，不是全局一个开关
+        target = map_rect(base, src, dst, pm)
+        if pm == "scale":
             target = clamp_into(target, dst.work)
-        plan.append((w, src, dst, target))
+        elif fully_outside(target, dst.rect):
+            # 尺寸不同的屏之间被强制纯平移时可能整块跑出去；救回来，
+            # 否则用户会以为窗口丢了。（部分出界的不动，保持"布局原样"的语义）
+            target = clamp_into(target, dst.work)
+        plan.append({"w": w, "si": si, "di": di, "src": src, "dst": dst,
+                     "base": base, "to": target, "pm": pm})
 
-    use_scale = args.scale or (mode == "auto" and (a.rect.width, a.rect.height)
-                               != (b.rect.width, b.rect.height))
+    pair_modes = {f"{s + 1}→{d + 1}": pair_mode(monitors[s], monitors[d], mode)
+                  for s, d in sorted(perm.items())}
+    n_scale = sum(1 for v in pair_modes.values() if v == "scale")
+    overall = ("scale" if pair_modes and n_scale == len(pair_modes)
+               else "translate" if n_scale == 0 else "mixed")
+
     payload = {
-        "ok": True, "dry_run": bool(args.dry_run), "mode": "scale" if use_scale else "translate",
+        "ok": True, "dry_run": bool(args.dry_run), "mode": overall,
+        "modes": pair_modes,             # 每一对用什么方式，GUI 直接拿来显示
         "monitors": [mon_json(i, m) for i, m in enumerate(monitors)],
-        "swap_pair": [monitors.index(a) + 1, monitors.index(b) + 1],
+        "mapping": [{"from": s + 1, "to": d + 1} for s, d in sorted(perm.items())],
+        # swap_pair 是旧字段，两块屏时仍给出，老脚本不至于断
+        "swap_pair": sorted(s + 1 for s in perm) if len(perm) == 2 else [],
         "plan": [{
-            "title": w.title, "proc": w.proc, "pid": w.pid, "state": w.state_name(),
-            "direction": "A→B" if src is a else "B→A",
-            "from": rect_json(base_rect), "to": rect_json(target),
-        } for w, src, dst, target in plan
-            for base_rect in [w.place.rcNormalPosition
-                              if w.state in (SW_SHOWMINIMIZED, SW_SHOWMAXIMIZED) else w.rect]],
+            "title": p["w"].title, "proc": p["w"].proc, "pid": p["w"].pid,
+            "state": p["w"].state_name(), "mode": p["pm"],
+            "direction": f"屏{p['si'] + 1}→屏{p['di'] + 1}",
+            "from": rect_json(p["base"]), "to": rect_json(p["to"]),
+        } for p in plan],
         "moved": 0, "failed": 0, "errors": [],
     }
 
@@ -495,11 +597,13 @@ def swap(args):
             print(json.dumps(payload, ensure_ascii=False))
         return 0
 
-    say(f"屏幕 A = {a.label} {a.rect!s}\n屏幕 B = {b.label} {b.rect!s}")
-    say(f"（映射方式：{'等比缩放' if use_scale else '纯平移'}）\n")
-    for w, src, dst, target in plan:
-        say(f"  [{'A→B' if src is a else 'B→A'}] {w.title[:44]!r} "
-            f"{w.state_name()} {w.rect!s} → {target!s}")
+    say("映射：" + "、".join(
+        f"屏{s + 1}→屏{d + 1}（{'等比缩放' if pair_modes[f'{s + 1}→{d + 1}'] == 'scale' else '纯平移'}）"
+        for s, d in sorted(perm.items())))
+    say("")
+    for p in plan:
+        say(f"  [屏{p['si'] + 1}→屏{p['di'] + 1}] {p['w'].title[:44]!r} "
+            f"{p['w'].state_name()} {p['base']!s} → {p['to']!s}")
 
     if args.dry_run:
         say(f"\n[dry-run] 共 {len(plan)} 个窗口，未做任何改动。")
@@ -509,7 +613,8 @@ def swap(args):
 
     fg = user32.GetForegroundWindow()  # 互换过程会短暂改变前台窗口，结束后还原
     ok_n = warn = denied = 0
-    for w, src, dst, target in plan:
+    for p in plan:
+        w, target, dst = p["w"], p["to"], p["dst"]
         ok, note = move_window(w, target, dst, not args.quiet)
         if not ok:
             warn += 1
@@ -545,6 +650,12 @@ def main(argv=None):
     p.add_argument("--list", action="store_true", help="列出显示器与待交换窗口")
     p.add_argument("--dry-run", action="store_true", help="只打印计划")
     p.add_argument("--monitors", help="要互换的两块屏编号，如 1,2（见 --list）")
+    p.add_argument("--rotate", nargs="?", const="*", default=None,
+                   metavar="1,2,3",
+                   help="环形轮转：窗口沿这个顺序往前推一格，如 --rotate 1,2,3 "
+                        "表示 1→2→3→1；不带值则按全部屏的左右顺序轮转")
+    p.add_argument("--permute", metavar="1>2,2>3,3>1",
+                   help="自定义排列：逐条写「源屏>目标屏」，编号见 --list")
     p.add_argument("--scale", action="store_true", help="不同分辨率时按比例缩放")
     p.add_argument("--translate-only", action="store_true", help="强制纯平移")
     p.add_argument("--exclude-title", help="额外排除的窗口标题正则")

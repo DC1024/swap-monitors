@@ -8,8 +8,13 @@
 用法:
     python tests/demo_windows.py            # 摆好并保持（Ctrl+C 结束）
     python tests/demo_windows.py --list     # 只打印将要创建的窗口，不真的创建
+    python tests/demo_windows.py --maximize # 每屏一个、且都最大化（供最大化专项测试用）
 
 提示：这些窗口是普通 tkinter 窗口，和本工具是两个进程，所以会被正常识别为待互换窗口。
+
+⚠️ 别在调用方进程里造完窗口再同步调 swap_windows.py：调用方会阻塞在 subprocess 上，
+Tcl 事件循环停转，Windows 会一直等这个不响应的窗口回消息（SetWindowPos /
+SetWindowPlacement 都是跨进程同步调用）→ 互换卡死。窗口必须活在**独立进程**里。
 """
 import argparse
 import os
@@ -31,9 +36,14 @@ LAYOUT = [
     (f"{MARK} · 产品主页 - 浏览器", 2, 160, 110, 1120, 760),
     (f"{MARK} · Windows PowerShell", 2, 1400, 260, 880, 540),
 ]
+# 最大化版：每屏恰好一个，最大化后各占满一块屏
+LAYOUT_MAX = [
+    (f"{MARK} · 最大化A", 1, 400, 300, 600, 400),
+    (f"{MARK} · 最大化B", 2, 400, 300, 600, 400),
+]
 
 
-def build(specs):
+def build(specs, maximize=False):
     import tkinter as tk
 
     roots = []
@@ -47,6 +57,10 @@ def build(specs):
                  font=("Microsoft YaHei UI", 15)).pack(pady=(36, 6))
         tk.Label(win, text="（演示用窗口，标题为通用示例）", bg="#ffffff", fg="#94a3b8",
                  font=("Microsoft YaHei UI", 10)).pack()
+        win.update()
+        if maximize:
+            win.state("zoomed")      # 先落到目标屏再最大化，就会贴满那一块屏
+            win.update()
         roots.append(win)
     return roots
 
@@ -54,6 +68,8 @@ def build(specs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true", help="只打印，不创建窗口")
+    ap.add_argument("--maximize", action="store_true",
+                    help="改成每屏一个窗口并最大化（标题为「示例 · 最大化A/B」）")
     args = ap.parse_args()
 
     mons = sw.enumerate_monitors()
@@ -61,8 +77,9 @@ def main():
         print("需要两块显示器；本机只检测到", len(mons), "块")
         return 1
 
+    layout = LAYOUT_MAX if args.maximize else LAYOUT
     specs = []
-    for title, mon_no, rx, ry, w, h in LAYOUT:
+    for title, mon_no, rx, ry, w, h in layout:
         if mon_no > len(mons):
             continue
         m = mons[mon_no - 1]
@@ -82,7 +99,7 @@ def main():
     if args.list:
         return 0
 
-    roots = build(specs)
+    roots = build(specs, maximize=args.maximize)
     print("\n窗口已就位。截图完成后按 Ctrl+C 结束本进程。")
     try:
         roots[0].mainloop()
