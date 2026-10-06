@@ -1,0 +1,12 @@
+# 统一换行符，避免在 Windows 上 checkout 之后整仓 diff 抖动
+* text=auto eol=lf
+
+# 批处理必须保持 CRLF，否则 cmd.exe 解出来的行尾会出问题
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制
+*.png binary
+*.ico binary
+*.exe binary
+*.mp4 binary

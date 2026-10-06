@@ -1,0 +1,24 @@
+# ---- build artefacts ----
+/build/
+/dist/
+*.spec
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- local scratch ----
+# 根目录的 assets/ 只是测试和截图脚本的临时输出；
+# 真正要发布到网页/README 的图都在 docs/assets/ 里（那个目录是跟踪的）。
+/assets/
+_superseded/
+*.log
+
+# ---- 演示录像放 Release，不进仓库 ----
+/docs/assets/*.mp4
+
+# ---- editors / os ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+~$*

@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>双屏窗口互换 · 按一下热键，两块屏幕上的窗口整体对调</title>
+<meta name="description" content="Windows 小工具：按一下 Ctrl+Alt+S，把两块显示器上的所有窗口整体互换，贴附好的布局原样保留。免安装、零依赖、开源 MIT。">
+<link rel="icon" href="assets/icon.png">
+<style>
+  :root{
+    --bg:#f4f7fb; --bg2:#e8eef8; --card:#ffffff; --line:#dde6f2;
+    --text:#16283f; --dim:#6b7f99; --accent:#1f6feb; --accent-d:#1656bd;
+    --accent-l:#e8f1ff; --ok:#1a7f4b; --ok-l:#e6f6ee; --warn:#b4530a;
+    --mon:#dfe8f5; --mon-b:#c9d9ee; --shadow:0 1px 2px rgba(22,40,63,.06),0 8px 24px rgba(22,40,63,.06);
+    --shadow-lg:0 2px 4px rgba(22,40,63,.06),0 24px 60px rgba(22,40,63,.12);
+    --mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e1622; --bg2:#131e2e; --card:#16202f; --line:#26364b;
+      --text:#e6edf7; --dim:#93a6bd; --accent:#58a6ff; --accent-d:#79b8ff;
+      --accent-l:#172a44; --ok:#4ade80; --ok-l:#13301f; --warn:#fbbf24;
+      --mon:#1d2a3c; --mon-b:#28394f;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+      --shadow-lg:0 2px 4px rgba(0,0,0,.4),0 24px 60px rgba(0,0,0,.5);
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--text);
+    font:16px/1.72 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI","PingFang SC","Hiragino Sans GB",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 22px}
+  code{font-family:var(--mono);font-size:.9em;background:var(--accent-l);color:var(--accent-d);
+       padding:.12em .42em;border-radius:5px;white-space:nowrap}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 82%,transparent);
+      backdrop-filter:blur(14px) saturate(1.5);border-bottom:1px solid var(--line)}
+  .nav-in{display:flex;align-items:center;gap:12px;height:62px}
+  .nav-logo{width:30px;height:30px;border-radius:8px;flex:0 0 auto;box-shadow:var(--shadow)}
+  .nav-name{font-weight:700;letter-spacing:.2px}
+  .nav-sp{flex:1}
+  .nav-link{color:var(--dim);font-size:14.5px;margin-right:20px;transition:color .15s}
+  .nav-link:hover{color:var(--accent)}
+  @media(max-width:760px){.nav-link{display:none}}
+
+  /* ---------- buttons ---------- */
+  .btn{display:inline-flex;align-items:center;gap:9px;font-weight:600;font-size:15px;
+       padding:11px 20px;border-radius:11px;border:1px solid transparent;cursor:pointer;
+       transition:transform .12s,box-shadow .18s,background .18s,color .18s;white-space:nowrap}
+  .btn:active{transform:translateY(1px)}
+  .btn-p{background:linear-gradient(180deg,var(--accent),var(--accent-d));color:#fff;
+         box-shadow:0 6px 18px color-mix(in srgb,var(--accent) 34%,transparent)}
+  .btn-p:hover{box-shadow:0 10px 26px color-mix(in srgb,var(--accent) 44%,transparent)}
+  .btn-g{background:var(--card);color:var(--text);border-color:var(--line);box-shadow:var(--shadow)}
+  .btn-g:hover{border-color:var(--accent);color:var(--accent)}
+  .btn-s{padding:8px 15px;font-size:14px;border-radius:9px}
+
+  /* ---------- hero ---------- */
+  header{padding:64px 0 40px;position:relative;overflow:hidden}
+  .glow{position:absolute;inset:-30% -10% auto -10%;height:520px;pointer-events:none;
+        background:radial-gradient(60% 60% at 28% 32%,color-mix(in srgb,var(--accent) 15%,transparent),transparent 70%),
+                   radial-gradient(50% 50% at 78% 18%,color-mix(in srgb,#0ea5e9 13%,transparent),transparent 70%)}
+  h1{font-size:clamp(29px,4.4vw,43px);line-height:1.2;margin:0 0 18px;letter-spacing:-.4px;font-weight:800}
+  .grad{background:linear-gradient(100deg,var(--accent),#0ea5e9 85%);-webkit-background-clip:text;
+        background-clip:text;color:transparent}
+  .lede{font-size:clamp(16px,2vw,19px);color:var(--dim);max-width:640px;margin:0 0 28px}
+  .badges{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:22px}
+  .badge{font-size:12.5px;font-weight:600;color:var(--dim);background:var(--card);
+         border:1px solid var(--line);padding:5px 11px;border-radius:999px}
+  .cta{display:flex;flex-wrap:wrap;gap:13px;align-items:center}
+  .hero-grid{display:grid;grid-template-columns:1fr;gap:44px;align-items:center}
+  @media(min-width:900px){.hero-grid{grid-template-columns:1.08fr .92fr;gap:30px}}
+  .kbd{display:inline-flex;gap:3px;font-family:var(--mono);font-size:.82em;vertical-align:1px}
+  .kbd i{font-style:normal;background:var(--card);border:1px solid var(--line);
+         border-bottom-width:2px;border-radius:5px;padding:1px 6px;color:var(--text)}
+
+  /* ---------- cards / sections ---------- */
+  section{padding:56px 0}
+  .sec-h{font-size:clamp(22px,3vw,29px);font-weight:800;margin:0 0 10px;letter-spacing:-.3px}
+  .sec-p{color:var(--dim);margin:0 0 34px;max-width:720px}
+  .grid{display:grid;gap:16px}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(258px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:22px 22px 24px;
+        box-shadow:var(--shadow);transition:transform .16s,box-shadow .2s,border-color .2s}
+  .card:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+  .card h3{margin:0 0 8px;font-size:16.5px;font-weight:700;display:flex;align-items:center;gap:9px}
+  .card p{margin:0;color:var(--dim);font-size:14.6px;line-height:1.68}
+  .ico{width:30px;height:30px;flex:0 0 auto;border-radius:8px;background:var(--accent-l);
+       display:grid;place-items:center}
+  .ico svg{width:17px;height:17px;stroke:var(--accent);fill:none;stroke-width:1.9;
+           stroke-linecap:round;stroke-linejoin:round}
+
+  /* ---------- steps ---------- */
+  .steps{display:grid;gap:14px}
+  .step{display:grid;grid-template-columns:44px 1fr;gap:16px;background:var(--card);
+        border:1px solid var(--line);border-radius:15px;padding:20px 22px;box-shadow:var(--shadow)}
+  .step .n{width:30px;height:30px;border-radius:50%;background:linear-gradient(180deg,var(--accent),var(--accent-d));
+           color:#fff;display:grid;place-items:center;font-weight:700;font-size:14px;margin-top:2px}
+  .step h3{margin:0 0 7px;font-size:16px}
+  .step p{margin:0;color:var(--dim);font-size:14.6px}
+  pre{background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:14px 16px;
+      overflow-x:auto;font-family:var(--mono);font-size:13.2px;line-height:1.75;margin:11px 0 0;color:var(--text)}
+  pre b{color:var(--accent);font-weight:600}
+  pre em{color:var(--dim);font-style:normal}
+
+  /* ---------- shot ---------- */
+  .shot{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:11px;
+        box-shadow:var(--shadow-lg)}
+  .shot img{width:100%;display:block;border-radius:9px}
+  .shot-cap{color:var(--dim);font-size:13.6px;text-align:center;margin-top:12px}
+  .ticks{display:grid;gap:10px;margin-top:24px}
+  .tick{display:grid;grid-template-columns:22px 1fr;gap:11px;align-items:start;font-size:14.8px}
+  .tick .ck{color:var(--ok);font-weight:800;line-height:1.5}
+  .tick span.d{color:var(--dim)}
+
+  /* ---------- download ---------- */
+  .dl{background:linear-gradient(160deg,var(--accent-l),transparent 70%);border:1px solid var(--line);
+      border-radius:20px;padding:40px 32px;text-align:center;box-shadow:var(--shadow)}
+  .dl h2{margin:0 0 10px;font-size:clamp(21px,3vw,27px);font-weight:800}
+  .dl p{color:var(--dim);margin:0 auto 24px;max-width:560px}
+  .dl .meta{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:22px}
+  .meta span{font-size:13px;color:var(--dim);background:var(--card);border:1px solid var(--line);
+             padding:5px 12px;border-radius:999px}
+  .note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--warn);
+        border-radius:11px;padding:14px 18px;font-size:14.2px;color:var(--dim);margin-top:22px;text-align:left}
+  .note b{color:var(--text)}
+
+  /* ---------- faq ---------- */
+  details{background:var(--card);border:1px solid var(--line);border-radius:13px;
+          padding:0 20px;box-shadow:var(--shadow);margin-bottom:11px}
+  details[open]{border-color:color-mix(in srgb,var(--accent) 34%,var(--line))}
+  summary{cursor:pointer;font-weight:650;font-size:15.4px;padding:17px 0;list-style:none;
+          display:flex;align-items:center;gap:11px}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"+";color:var(--accent);font-weight:800;font-size:17px;width:14px}
+  details[open] summary::before{content:"–"}
+  details p{margin:0 0 18px 25px;color:var(--dim);font-size:14.6px}
+
+  footer{border-top:1px solid var(--line);padding:34px 0 52px;color:var(--dim);font-size:14px}
+  .foot-in{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  .foot-in a:hover{color:var(--accent)}
+  hr{border:0;border-top:1px solid var(--line);margin:0}
+
+  /* ---------- hero animation ---------- */
+  .monrect{fill:var(--card);stroke:var(--mon-b);stroke-width:1.5}
+  .monbase{fill:var(--mon);stroke:var(--mon-b);stroke-width:1.5}
+  .monlbl{fill:var(--dim);font:600 11px/1 -apple-system,"Microsoft YaHei UI",sans-serif;
+          text-anchor:middle;letter-spacing:.6px}
+  .wA{animation:mvA 7s cubic-bezier(.45,.05,.25,1) infinite}
+  .wB{animation:mvB 7s cubic-bezier(.45,.05,.25,1) infinite}
+  @keyframes mvA{0%,26%{transform:translateX(0)}46%,74%{transform:translateX(390px)}94%,100%{transform:translateX(0)}}
+  @keyframes mvB{0%,26%{transform:translateX(0)}46%,74%{transform:translateX(-390px)}94%,100%{transform:translateX(0)}}
+  @media(prefers-reduced-motion:reduce){.wA,.wB{animation:none}}
+  .arrowp{animation:fl 7s steps(1) infinite}
+  @keyframes fl{0%,26%{opacity:1}46%,100%{opacity:.25}}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-in">
+    <img class="nav-logo" src="assets/icon.png" alt="">
+    <span class="nav-name">双屏窗口互换</span>
+    <span class="nav-sp"></span>
+    <a class="nav-link" href="#why">为什么</a>
+    <a class="nav-link" href="#feat">特性</a>
+    <a class="nav-link" href="#how">原理</a>
+    <a class="nav-link" href="#faq">常见问题</a>
+    <a class="btn btn-p btn-s" href="https://github.com/DC1024/swap-monitors/releases/latest/download/SwapMonitors.exe">下载</a>
+  </div>
+</nav>
+
+<header>
+  <div class="glow"></div>
+  <div class="wrap hero-grid">
+    <div>
+      <div class="badges">
+        <span class="badge">Windows 10 / 11</span>
+        <span class="badge">免安装单文件</span>
+        <span class="badge">零第三方依赖</span>
+        <span class="badge">开源 MIT</span>
+      </div>
+      <h1>两块屏幕上的窗口<br><span class="grad">按一下热键，整体对调</span></h1>
+      <p class="lede">
+        左边屏的开发环境、右边屏的浏览器和文档 —— 一个热键全部对换，
+        <b>贴附好的布局原样保留</b>。最大化的还是最大化，左右分屏的还在原来的相对位置。
+      </p>
+      <div class="cta">
+        <a class="btn btn-p" href="https://github.com/DC1024/swap-monitors/releases/latest/download/SwapMonitors.exe">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17"/>
+          </svg>
+          下载 Windows 版
+        </a>
+        <a class="btn btn-g" href="#how">看看它是怎么做到的</a>
+      </div>
+      <p style="color:var(--dim);font-size:14px;margin:20px 0 0">
+        默认热键 <span class="kbd"><i>Ctrl</i><i>Alt</i><i>S</i></span>，可在界面里改成任意组合
+      </p>
+    </div>
+
+    <!-- hero animation -->
+    <svg viewBox="0 0 720 320" role="img" aria-label="两块显示器上的窗口互换示意" style="width:100%;height:auto">
+      <!-- monitor A -->
+      <rect class="monrect" x="14" y="52" width="300" height="196" rx="11"/>
+      <rect class="monbase" x="132" y="252" width="64" height="9" rx="3"/>
+      <rect class="monbase" x="106" y="262" width="116" height="8" rx="4"/>
+      <text class="monlbl" x="164" y="36">屏 1</text>
+
+      <!-- monitor B -->
+      <rect class="monrect" x="406" y="52" width="300" height="196" rx="11"/>
+      <rect class="monbase" x="524" y="252" width="64" height="9" rx="3"/>
+      <rect class="monbase" x="498" y="262" width="116" height="8" rx="4"/>
+      <text class="monlbl" x="556" y="36">屏 2</text>
+
+      <!-- arrow between -->
+      <g class="arrowp" stroke="var(--accent)" stroke-width="2.2" fill="none"
+         stroke-linecap="round" stroke-linejoin="round">
+        <path d="M330 150h60"/><path d="M381 140l9 10-9 10"/><path d="M390 140l-9 10 9 10"/>
+      </g>
+
+      <!-- windows that live on screen 1 -->
+      <g class="wA">
+        <rect x="30" y="70" width="152" height="102" rx="6" fill="var(--accent)" opacity=".92"/>
+        <rect x="40" y="84" width="90" height="7" rx="3.5" fill="#fff" opacity=".85"/>
+        <rect x="40" y="99" width="120" height="7" rx="3.5" fill="#fff" opacity=".55"/>
+        <rect x="40" y="114" width="66" height="7" rx="3.5" fill="#fff" opacity=".55"/>
+        <rect x="30" y="184" width="152" height="52" rx="6" fill="var(--accent)" opacity=".55"/>
+        <rect x="40" y="198" width="80" height="7" rx="3.5" fill="#fff" opacity=".8"/>
+      </g>
+
+      <!-- windows that live on screen 2 -->
+      <g class="wB">
+        <rect x="422" y="70" width="268" height="66" rx="6" fill="#0ea5e9" opacity=".85"/>
+        <rect x="434" y="87" width="130" height="7" rx="3.5" fill="#fff" opacity=".85"/>
+        <rect x="434" y="104" width="196" height="7" rx="3.5" fill="#fff" opacity=".5"/>
+        <rect x="422" y="148" width="126" height="88" rx="6" fill="#0ea5e9" opacity=".6"/>
+        <rect x="560" y="148" width="130" height="88" rx="6" fill="#0ea5e9" opacity=".6"/>
+      </g>
+    </svg>
+  </div>
+</header>
+
+<hr>
+
+<!-- ================= WHY ================= -->
+<section id="why">
+  <div class="wrap">
+    <h2 class="sec-h">拖窗口这件事，本不该花两分钟</h2>
+    <p class="sec-p">如果你也每天在两块屏之间来回搬家，这三个场景大概很熟悉。</p>
+    <div class="grid g3">
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span>一次要拖十几个</h3>
+        <p>窗口从一块屏搬到另一块，得逐个拖过去、再逐个摆回原来的相对位置。手忙脚乱，还容易把某个窗口漏在错的那块屏上。</p>
+      </div>
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M3 6h7v5H3zM14 6h7v5h-7zM3 13h7v5H3zM14 13h7v5h-7z"/></svg></span>吸咐位置总差几个像素</h3>
+        <p>系统吸附本来是对齐好的，手拖过去就再也不是原来那个比例了。用 Win+方向键又得每个窗口重来一遍。</p>
+      </div>
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3.2-6.9"/><path d="M3 4.5V9h4.5"/></svg></span>换回来还得再拖一遍</h3>
+        <p>接上投影、开完会、切回原来的布局 —— 又是一次手工搬家。这种事一天要发生好几次。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FEATURES ================= -->
+<section id="feat" style="background:color-mix(in srgb,var(--bg2) 55%,transparent)">
+  <div class="wrap">
+    <h2 class="sec-h">它做了什么</h2>
+    <p class="sec-p">不是简单的「把窗口挪到另一块屏」，而是把整块屏的布局当作一个整体来搬运。</p>
+    <div class="grid g3">
+
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M7 10.5h3M7 13.5h6M14 10.5h3"/></svg></span>全局热键</h3>
+        <p>默认 <code>Ctrl+Alt+S</code>，任何窗口下按下即生效；也可以在界面里点按钮，或者改成你习惯的组合键。</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 9.5h16M9.5 9.5V20"/></svg></span>布局真的不乱</h3>
+        <p>只改窗口的矩形位置、<b>不动窗口状态</b>：最大化过去还是最大化，左右吸附过去仍是贴着边，相对位置逐像素对应。</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v10"/><path d="M8.5 6.5 12 3l3.5 3.5"/><path d="M4 14v5.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V14"/></svg></span>常驻托盘</h3>
+        <p>点 <code>✕</code> 或最小化都收进系统托盘，不占任务栏。左键托盘图标唤回界面，右键可直接互换、退出。</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3 4.5 6.5v5c0 4.4 3.1 8.4 7.5 9.5 4.4-1.1 7.5-5.1 7.5-9.5v-5z"/><path d="M9.2 12.2l2 2 3.6-4"/></svg></span>能搬动管理员窗口</h3>
+        <p>以管理员身份运行的程序，普通权限搬不动（Windows 的 UIPI 限制）。界面里有一键「以管理员身份重启」，真遇到搬不动的窗口还会主动问你要不要提权。</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><rect x="2.5" y="7" width="12" height="10" rx="2"/><rect x="16" y="9.5" width="5.5" height="5" rx="1.5"/><path d="M14.5 12h1.5"/></svg></span>分辨率无关</h3>
+        <p>两块屏尺寸一致时<b>纯平移</b>，不缩放、不丢像素；尺寸不一致时自动等比缩放并夹进工作区。1080p / 1440p / 4K / 带鱼屏 / 横排竖排都适用。</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M20.5 12.5 12 21l-8.5-8.5"/><path d="M12 3v13.5"/><path d="M3.5 3.5h17"/></svg></span>零依赖免安装</h3>
+        <p>单文件 exe 自带 Python 运行时，双击就用。源码也只用了标准库（<code>ctypes</code> + <code>tkinter</code>），没有任何 pip 依赖。</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ================= SCREENSHOT ================= -->
+<section id="ui">
+  <div class="wrap">
+    <h2 class="sec-h">界面</h2>
+    <p class="sec-p">打开就能看到两块屏的实时信息、哪些窗口会被换到哪儿。第一次用建议先点「预览计划」。</p>
+    <div class="shot">
+      <img src="assets/gui.png" alt="双屏窗口互换 主界面：上方是两块显示器的信息卡片，中间是窗口列表和互换后的目标位置，下方是全局热键与选项">
+    </div>
+    <p class="shot-cap">上方两张卡片是两块屏（★ 为主屏）；中间表格的「互换后」列就是每个窗口的新位置</p>
+    <div class="ticks">
+      <div class="tick"><span class="ck">✓</span><span><b>预览计划（不改动）</b> <span class="d">— 先把「互换后」列填上目标位置，一个窗口都不动，确认无误再执行。</span></span></div>
+      <div class="tick"><span class="ck">✓</span><span><b>恢复原状（再按一次）</b> <span class="d">— 映射是可逆的，再换一次即可回到原位，同尺寸屏下逐像素还原。</span></span></div>
+      <div class="tick"><span class="ck">✓</span><span><b>排除的窗口标题</b> <span class="d">— 支持正则，例如 <code>.*Steam.*</code> 就永远不动标题里有 Steam 的窗口。</span></span></div>
+      <div class="tick"><span class="ck">✓</span><span><b>开机自动启动 + 启动时直接收进托盘</b> <span class="d">— 勾上这两项，开机后在托盘静默待命，需要时按个热键就行。</span></span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= HOW ================= -->
+<section id="how" style="background:color-mix(in srgb,var(--bg2) 55%,transparent)">
+  <div class="wrap">
+    <h2 class="sec-h">它是怎么做到的</h2>
+    <p class="sec-p">
+      没有用任何私有接口，全是 Win32 的公开 API，通过 Python 的 <code>ctypes</code> 直接调用 ——
+      这也是它不需要任何第三方库的原因。
+    </p>
+
+    <div class="steps">
+
+      <div class="step">
+        <div class="n">1</div>
+        <div>
+          <h3>枚举窗口，然后过滤</h3>
+          <p><code>EnumWindows</code> 拿到所有顶层窗口，再逐个排除不该动的：不可见的、没有标题的、
+          <code>WS_EX_TOOLWINDOW</code> 工具窗、被 DWM 隐藏的窗口（<code>DWMWA_CLOAKED</code>，
+          也就是躺在别的虚拟桌面上的那些），以及程序自己。剩下的就是「用户看得见、能拖动」的窗口。</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="n">2</div>
+        <div>
+          <h3>判断每个窗口属于哪块屏</h3>
+          <p><code>MonitorFromWindow</code> 拿到显示器句柄，<code>GetMonitorInfoW</code> 拿到它的矩形。
+          这里有个坑：<b>最小化窗口的矩形永远是 <code>(-32000, -32000)</code></b>，
+          所以对最小化的窗口要改用 <code>GetWindowPlacement().rcNormalPosition</code> 的中心点来判断归属，
+          否则它们会全部被算到同一块屏上。</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="n">3</div>
+        <div>
+          <h3>算新位置 —— 「布局不乱」的关键就在这两行</h3>
+          <p>设源屏矩形 <code>src</code>、目标屏矩形 <code>dst</code>：</p>
+<pre><em># 两块屏尺寸相同：纯平移（整数加法，完全可逆）</em>
+新位置 = 原位置 + ( dst.left - src.left , dst.top - src.top )
+
+<em># 尺寸不同：等比缩放</em>
+sx = dst.w / src.w      sy = dst.h / src.h
+新位置 = dst 左上角 + ( 原位置 - src 左上角 ) × ( sx , sy )</pre>
+          <p style="margin-top:12px">
+            平移是整数加法，所以换过去再换回来会<b>逐像素还原</b>，不会累积误差 —— 这也是默认配置下
+            能放心来回切的原因。缩放要对 <code>sx</code>／<code>sy</code> 分别取整，来回换会有 1px 级别的误差，
+            属于数学上不可避免，所以只在两块屏尺寸不同时才自动启用。
+            窗口如果被换到工作区之外（比如换到一块更小的屏），会被自动<b>夹回</b>可视范围内。
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="n">4</div>
+        <div>
+          <h3>应用位置，最大化窗口要特殊照顾</h3>
+          <p>普通窗口直接 <code>SetWindowPos</code> 就行。但<b>最大化窗口不能这么办</b>：
+          只改 <code>WINDOWPLACEMENT</code> 里的 <code>rcNormalPosition</code>，<code>showCmd</code>
+          明明改了，窗口却纹丝不动。必须走</p>
+<pre>SetWindowPlacement( SW_SHOWNOACTIVATE )  →  SetWindowPos( ... )  →  ShowWindow( SW_MAXIMIZE )</pre>
+          <p style="margin-top:12px">这三步，并且会验证窗口中心确实落在了目标屏上，失败就重试一次。</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="n">5</div>
+        <div>
+          <h3>热键与托盘</h3>
+          <p><code>RegisterHotKey</code> 注册全局热键，跑在一个带真消息泵的独立线程里。
+          托盘图标用 <code>Shell_NotifyIconW</code>；注意<b>消息专用窗口（<code>HWND_MESSAGE</code>）收不到托盘回调</b>，
+          所以这里建的是一个隐藏起来的普通顶层窗口。点 <code>✕</code> 时并不退出，而是把界面
+          <code>withdraw()</code> 藏起来、热键继续有效 —— 这正是收进托盘之后热键依然能用的原因。</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ================= DOWNLOAD ================= -->
+<section id="dl">
+  <div class="wrap">
+    <div class="dl">
+      <h2>下载</h2>
+      <p>单文件、免安装，下载后双击运行。首次启动会常驻托盘，按 <b>Ctrl+Alt+S</b> 即可互换。</p>
+      <a class="btn btn-p" href="https://github.com/DC1024/swap-monitors/releases/latest/download/SwapMonitors.exe" style="font-size:16px;padding:13px 26px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17"/>
+        </svg>
+        下载 SwapMonitors.exe
+      </a>
+      <div class="meta">
+        <span>Windows 10 / 11 · 64 位</span>
+        <span>约 12 MB</span>
+        <span>免安装</span>
+        <span>不联网</span>
+        <span>MIT 开源</span>
+      </div>
+      <div class="note">
+        <b>关于「已保护你的电脑」提示：</b>这是个人开发者的 exe 没有购买代码签名证书时的正常提示。
+        点「更多信息」→「仍要运行」即可。程序<b>不联网、不上传任何数据</b>；
+        唯一的「写入」是你在界面里自己勾选「开机自动启动」时，会在启动文件夹里放一个快捷方式，取消勾选即删除。
+        不放心的可以直接看<a href="https://github.com/DC1024/swap-monitors" style="color:var(--accent)">源码</a>，
+        或者按下面的方式自己打包。
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:18px">
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M8 6 3 12l5 6M16 6l5 6-5 6"/></svg></span>从源码运行</h3>
+        <p>只需要 Windows 上的 <b>Python 3.8+</b>（要带 tkinter，python.org 官方版都带），没有任何 pip 依赖。
+        第一条是图形界面，第二条是命令行。</p>
+<pre>python swap_gui.py
+python swap_windows.py --list</pre>
+      </div>
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v6M12 15v6M3 12h6M15 12h6"/><circle cx="12" cy="12" r="2.6"/></svg></span>自己打包 exe</h3>
+        <p>仓库里带了一键打包脚本，会自动建虚拟环境、装 PyInstaller、生成图标：</p>
+<pre>build_exe.bat
+<em># 产出 dist\SwapMonitors.exe</em></pre>
+      </div>
+      <div class="card">
+        <h3><span class="ico"><svg viewBox="0 0 24 24"><path d="M5 12.5 9.5 17 19 7.5"/></svg></span>跑一遍自测</h3>
+        <p>映射逻辑的测试是纯数学的，任何机器都能跑；界面验收那条会真的移动窗口、发真热键，跑之前先存一下手头的东西。</p>
+<pre>python tests/test_map.py
+python tests/verify_gui.py
+    --hotkey --tray</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FAQ ================= -->
+<section id="faq" style="background:color-mix(in srgb,var(--bg2) 55%,transparent)">
+  <div class="wrap">
+    <h2 class="sec-h">常见问题</h2>
+    <p class="sec-p">几个实际的边界，先说清楚比事后踩坑好。</p>
+
+    <details open>
+      <summary>有些窗口就是搬不动，为什么？</summary>
+      <p>那些是<b>以管理员身份运行</b>的程序。Windows 的 UIPI（用户界面特权隔离）规定：
+      普通权限的进程不能移动更高完整性级别进程的窗口。这是系统安全机制，绕不过去。
+      界面里给出了「以管理员身份重启」，重启后会弹一次 UAC；互换时如果发现有搬不动的窗口，
+      程序也会主动问你要不要提权。</p>
+    </details>
+
+    <details>
+      <summary>会误动我正在用的窗口吗？</summary>
+      <p>会移动，但这是它的本职工作 —— 而且<b>不会改变窗口的状态</b>，除了位置什么都变了。
+      如果有些窗口你不想动，在「排除的窗口标题」里填正则排除掉；也可以勾上「跳过最小化窗口」。
+      另外程序会跳过躺在其它虚拟桌面上的窗口（用 DWM cloaked 状态判定），
+      不会把你在另一个桌面上的东西拽过来。</p>
+    </details>
+
+    <details>
+      <summary>两块屏分辨率不一样怎么办？</summary>
+      <p>默认会自动切换到<b>等比缩放</b>模式，并按目标屏的工作区做边界夹取，保证换过去之后没有窗口跑到屏幕外面。
+      如果你更希望「尺寸原样搬过去」（宁可超出边界），把「两屏分辨率不同时等比缩放」的勾去掉就是纯平移模式。</p>
+    </details>
+
+    <details>
+      <summary>支持三块以上的屏幕吗？</summary>
+      <p>一次只处理两块屏，这符合绝大多数「A 屏 ↔ B 屏 对调」的场景。
+      如果你有三块屏，可以用 <code>--monitors 1,3</code> 指定这次要动哪两块。
+      多屏两两互换的场景暂时没做。</p>
+    </details>
+
+    <details>
+      <summary>支持 macOS / Linux 吗？</summary>
+      <p>不支持，也没有跨平台计划：整个实现都是 Win32 API。
+      macOS 上有现成的窗口管理工具，Linux 则取决于你用哪个窗口管理器。</p>
+    </details>
+
+    <details>
+      <summary>怎么彻底卸载？</summary>
+      <p>删掉 exe 即可，程序没有安装过程。另外两处痕迹：
+      设置存在 <code>%APPDATA%\SwapMonitors\config.json</code>，
+      开机自启是启动文件夹里的一个快捷方式（在界面里取消勾选会自动删掉）。两处都可以直接删。</p>
+    </details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-in">
+    <img src="assets/icon.png" alt="" style="width:24px;height:24px;border-radius:6px">
+    <span>双屏窗口互换 · MIT License</span>
+    <span class="nav-sp"></span>
+    <a href="https://github.com/DC1024/swap-monitors">GitHub 仓库</a>
+    <a href="https://github.com/DC1024/swap-monitors/releases">版本发布</a>
+    <a href="https://github.com/DC1024/swap-monitors/issues">反馈问题</a>
+  </div>
+</footer>
+
+</body>
+</html>
