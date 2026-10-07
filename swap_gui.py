@@ -26,7 +26,7 @@ from tkinter import ttk
 import swap_windows as sw
 
 APP_TITLE = "多屏窗口互换"
-APP_VER = "1.1"
+APP_VER = "1.1.1"
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")
@@ -222,6 +222,39 @@ def is_elevated():
         return False
 
 
+def _sanitize_env_for_independent_child():
+    """拉起「独立新实例」前，把 PyInstaller 的内部环境变量摘干净。
+
+    为什么需要这一步（v1.1.1 修复的提权崩溃）：
+    - PyInstaller 6.9 起，用同一个 exe 再拉起的进程默认被当成「worker 子进程」，
+      会复用父进程的解包目录；官方文档要求重启场景必须设
+      PYINSTALLER_RESET_ENVIRONMENT=1 才会被当作独立实例。
+    - 6.22.1 起又加了安全校验（#9492/#9520）：UAC 提权的 onefile 进程若继承了
+      上一实例的 _PYI_* 内部变量，会被当成 onefile 子进程去校验「原始父进程」，
+      而原 bootloader 在旧实例退出时就没了 —— 于是弹
+      「Security validation failure: invalid originating onefile parent process
+      (PID not found)」，提权重启直接失败、新旧两个都没了。
+    ShellExecuteW 的子进程继承的是调用方**此刻**的环境块，所以这里先摘掉
+    _PYI_*、设上官方开关，等 ShellExecuteW 把环境块复制走之后再原样还原。
+    返回还原用的快照（交给 _restore_env_for_child）。
+    """
+    saved = {k: os.environ[k] for k in list(os.environ) if k.startswith("_PYI_")}
+    for k in saved:
+        del os.environ[k]
+    saved["PYINSTALLER_RESET_ENVIRONMENT"] = os.environ.get("PYINSTALLER_RESET_ENVIRONMENT")
+    os.environ["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return saved
+
+
+def _restore_env_for_child(saved):
+    """把 _sanitize_env_for_independent_child 改动的环境变量原样还原。"""
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
 def relaunch_as_admin():
     """弹 UAC 以管理员身份重启自己。返回 True 表示已成功拉起（调用方应自行退出）。"""
     shell32 = ctypes.WinDLL("shell32", use_last_error=True)
@@ -234,7 +267,11 @@ def relaunch_as_admin():
         exe = sys.executable
         params = f'"{os.path.abspath(__file__)}"'
         cwd = os.path.dirname(os.path.abspath(__file__))
-    ret = shell32.ShellExecuteW(None, "runas", exe, params, cwd, 1)  # SW_SHOWNORMAL
+    saved = _sanitize_env_for_independent_child()
+    try:
+        ret = shell32.ShellExecuteW(None, "runas", exe, params, cwd, 1)  # SW_SHOWNORMAL
+    finally:
+        _restore_env_for_child(saved)
     return int(ret or 0) > 32          # >32 表示成功；5 = 用户在 UAC 上点了「否」
 
 

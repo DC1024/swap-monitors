@@ -217,6 +217,7 @@ build_exe.bat
 
 ```bash
 python tests/test_map.py              # 映射逻辑与分辨率无关（纯数学，任何机器可跑）
+python tests/test_elevate.py          # 提权重启前的 PyInstaller 环境清洗（纯逻辑，任何机器可跑）
 python tests/test_selftest.py         # 造真实窗口跑一遍互换 + 校验最大化/最小化（需两块屏）
 python tests/test_arrange.py          # 排列编辑器逻辑：两屏/三屏/坏配置兜底（用伪造显示器）
 python tests/test_maximized.py        # 最大化窗口到底能不能搬（需两块屏）
