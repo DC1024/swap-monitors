@@ -15,6 +15,7 @@ import ctypes
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -26,7 +27,7 @@ from tkinter import ttk
 import swap_windows as sw
 
 APP_TITLE = "多屏窗口互换"
-APP_VER = "1.1.2"
+APP_VER = "1.1.3"
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")
@@ -559,6 +560,92 @@ def _write_ascii_file(path, text):
     return enc
 
 
+def _long_path(p):
+    """把 8.3 短路径还原成长路径，用于路径比对（.cmd 里写的是短路径）。"""
+    try:
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.GetLongPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        k.GetLongPathNameW.restype = wintypes.DWORD
+        n = k.GetLongPathNameW(p, None, 0)
+        if n:
+            buf = ctypes.create_unicode_buffer(n)
+            if k.GetLongPathNameW(p, buf, n):
+                return buf.value
+    except Exception:
+        pass
+    return p
+
+
+def _same_path(a, b):
+    """忽略大小写、正斜杠和 8.3 短路径差异地比较两个路径。"""
+    try:
+        return (os.path.normcase(os.path.abspath(_long_path(a)))
+                == os.path.normcase(os.path.abspath(_long_path(b))))
+    except Exception:
+        return a == b
+
+
+def _autostart_exe():
+    """自启项真正要拉起的那个 exe（frozen 是自己，源码方式是 pythonw）。"""
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    return pyw if os.path.exists(pyw) else sys.executable
+
+
+def _autostart_cmd_text():
+    """自启 .cmd 的内容。
+
+    多了一行 `if not exist ... exit /b 0`：万一 exe 被挪走或删掉，
+    开机时静默跳过，而不是弹一个黑窗报错。
+    """
+    exe = _ascii_path(_autostart_exe())
+    if getattr(sys, "frozen", False):
+        target = f'"{exe}"'
+    else:
+        target = f'"{exe}" "{_ascii_path(os.path.abspath(__file__))}"'
+    return ("@echo off\r\n"
+            f'if not exist "{exe}" exit /b 0\r\n'
+            f'start "" {target} --minimized\r\n')
+
+
+def _autostart_recorded_exe():
+    """读现有 .cmd 里记录的 exe 路径；文件不存在或读不出来就返回 None。"""
+    try:
+        with open(AUTOSTART_CMD, "r", encoding="mbcs", errors="replace") as f:
+            text = f.read()
+    except Exception:
+        return None
+    m = re.search(r'start\s+""\s+"([^"]+)"', text)
+    return m.group(1) if m else None
+
+
+def _autostart_needs_update():
+    """自启项是否需要重写：文件丢了，或里面记的路径已经不是当前的 exe。"""
+    recorded = _autostart_recorded_exe()
+    if recorded is None:
+        return True                      # 文件不存在/读不出来 → 按配置重建
+    return not _same_path(recorded, _autostart_exe())
+
+
+def sync_autostart_if_moved():
+    """exe 换了位置就静默重写自启项，不用用户手动关再开一次。
+
+    以前自启项里写死 exe 的绝对路径，程序换个目录/换个盘之后就指向了不存在的文件：
+    开机时要么弹黑窗、要么干脆不起来，必须手动把「开机自动启动」关掉再打开才会刷新。
+    现在每次启动都比对一次，不一致就重写 —— 换位置后只要正常跑一次就自动跟上。
+    返回 True 表示这次真的重写了。
+    """
+    try:
+        if not _autostart_needs_update():
+            return False
+        os.makedirs(STARTUP_DIR, exist_ok=True)
+        _write_ascii_file(AUTOSTART_CMD, _autostart_cmd_text())
+        return True
+    except Exception:
+        return False
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -591,6 +678,17 @@ class App:
         self._fit()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Unmap>", self._on_unmap)
+        # 自启自愈：配置里开着但 .cmd 丢了、或者记的还是 exe 的老位置，就在这里
+        # 静默重写一遍。程序换目录/换盘之后正常跑一次就自动跟上，不用手动关再开。
+        if self.cfg.get("autostart"):
+            self.root.after(200, self._autostart_selfheal)
+
+    def _autostart_selfheal(self):
+        try:
+            if sync_autostart_if_moved():
+                self.set_status(f"开机自启已按新位置更新：{_ascii_path(_autostart_exe())}")
+        except Exception:
+            pass
 
     # ---------- 外观 ----------
     def _fit(self, recenter=True):
@@ -899,18 +997,9 @@ class App:
         try:
             if on:
                 os.makedirs(STARTUP_DIR, exist_ok=True)
-                if getattr(sys, "frozen", False):
-                    target = f'"{_ascii_path(sys.executable)}"'
-                else:                      # 源码方式运行时用 pythonw + 脚本路径
-                    pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-                    if not os.path.exists(pyw):
-                        pyw = sys.executable
-                    target = (f'"{_ascii_path(pyw)}" '
-                              f'"{_ascii_path(os.path.abspath(__file__))}"')
-                enc = _write_ascii_file(AUTOSTART_CMD,
-                                        "@echo off\r\n"
-                                        f"start \"\" {target} --minimized\r\n")
-                self.set_status(f"已设置开机自启（{enc} 编码）：{AUTOSTART_CMD}")
+                # 幂等：不管之前是什么内容，一律按当前 exe 的真实位置重写一次
+                _write_ascii_file(AUTOSTART_CMD, _autostart_cmd_text())
+                self.set_status(f"已设置开机自启：{AUTOSTART_CMD}")
             else:
                 if os.path.exists(AUTOSTART_CMD):
                     os.remove(AUTOSTART_CMD)
