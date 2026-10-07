@@ -26,7 +26,7 @@ from tkinter import ttk
 import swap_windows as sw
 
 APP_TITLE = "多屏窗口互换"
-APP_VER = "1.1.1"
+APP_VER = "1.1.2"
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")
@@ -200,12 +200,27 @@ _HK_WNDPROC_REF = WNDPROC(_hk_wndproc)
 # ---------------------------------------------------------------- 权限（UAC）
 
 def is_elevated():
-    """当前进程是否已是管理员权限（读令牌的 TokenElevation，比 IsUserAnAdmin 可靠）。"""
+    """当前进程是否已是管理员权限（读令牌的 TokenElevation，比 IsUserAnAdmin 可靠）。
+
+    argtypes 必须显式给全：GetCurrentProcess() 返回的是 -1 伪句柄，经
+    c_void_p 转成 Python 里的 2**64-1；若让 ctypes 按默认的 c_int 传参，
+    OpenProcessToken 会抛 OverflowError，被下面的 except 吞掉后这里就
+    永远返回 False —— v1.1.1 及之前正是这个坑：明明已经提权成功，
+    界面却一直显示「普通用户」，而且提权后再点提权还会再来一遍。
+    """
     try:
         advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         TOKEN_QUERY, TokenElevation = 0x0008, 20
+        k32.GetCurrentProcess.argtypes = []
         k32.GetCurrentProcess.restype = wintypes.HANDLE
+        advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                              ctypes.POINTER(wintypes.HANDLE)]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                                 wintypes.LPVOID, wintypes.DWORD,
+                                                 ctypes.POINTER(wintypes.DWORD)]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
         h = wintypes.HANDLE()
         if not advapi32.OpenProcessToken(k32.GetCurrentProcess(), TOKEN_QUERY,
                                          ctypes.byref(h)):

@@ -94,6 +94,27 @@ check("两个新helper都存在", callable(G._sanitize_env_for_independent_child
       and callable(G._restore_env_for_child))
 
 print()
+print("== 5) is_elevated 的伪句柄签名回归（v1.1.2 修的坑） ==")
+# 旧代码没给 OpenProcessToken 设 argtypes：GetCurrentProcess() 的 -1 伪句柄经
+# c_void_p 变成 2**64-1，ctypes 默认按 c_int 传参会 OverflowError，被
+# except 吞掉后 is_elevated() 永远返回 False（提权成功也显示普通用户）。
+check("is_elevated() 返回 bool（不抛异常）", isinstance(G.is_elevated(), bool))
+check("测试进程未提权时结果为 False", G.is_elevated() is False)
+# 在签名层面复刻修复后的调用链：设了 argtypes 后伪句柄必须能原样传进去
+import ctypes  # noqa: E402
+from ctypes import wintypes  # noqa: E402
+k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+adv = ctypes.WinDLL("advapi32", use_last_error=True)
+k32.GetCurrentProcess.restype = wintypes.HANDLE
+adv.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                 ctypes.POINTER(wintypes.HANDLE)]
+tok = wintypes.HANDLE()
+ok = adv.OpenProcessToken(k32.GetCurrentProcess(), 0x0008, ctypes.byref(tok))
+check("设 argtypes 后 OpenProcessToken 成功打开令牌（不再 OverflowError）", bool(ok))
+if ok:
+    k32.CloseHandle(tok)
+
+print()
 os.environ.pop("_PYI_ARCHIVE_FILE", None)
 os.environ.pop("_PYI_PARENT_PID", None)
 os.environ.pop("_PYI_APPLICATION_HOME_DIR", None)
