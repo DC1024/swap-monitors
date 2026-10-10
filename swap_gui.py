@@ -27,7 +27,7 @@ from tkinter import ttk
 import swap_windows as sw
 
 APP_TITLE = "多屏窗口互换"
-APP_VER = "1.1.3"
+APP_VER = "1.1.4"
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")
@@ -36,6 +36,9 @@ CFG_PATH = os.environ.get("SWAPMONITORS_CONFIG") or os.path.join(CFG_DIR, "confi
 STARTUP_DIR = os.path.join(os.environ.get("APPDATA") or "", "Microsoft", "Windows",
                            "Start Menu", "Programs", "Startup")
 AUTOSTART_CMD = os.path.join(STARTUP_DIR, "SwapMonitors.cmd")
+# 第二个实例发现程序已在运行时，留下这个旗标；老实例的轮询会消费它并把界面亮出来。
+# 用文件而不是窗口消息：跨权限（普通 → 管理员）也能通信，且不需要 Tk 支持自定义消息。
+SHOW_FLAG = os.path.join(CFG_DIR, "show.flag")
 
 DEFAULT_CFG = {
     "hotkey": "ctrl+alt+s",
@@ -46,6 +49,15 @@ DEFAULT_CFG = {
     "autostart": False,
     "notify_on_swap": True,     # 互换完成后是否弹托盘气泡
     "permute": None,            # {"1": 2, "2": 1} 这样的「哪块屏送往哪块屏」；None = 默认行为
+    "run_as_admin": False,      # 记住管理员模式：由「最高权限」计划任务拉起，免 UAC
+    # 内部标记：勾选管理员模式后发起了提权重启，等提权后的实例回来补建任务。
+    # 带下划线前缀，界面上不出现，但必须落盘（跨进程传递）。
+    "_pending_admin_setup": False,
+    # 内部标记：这次是「普通实例交棒给计划任务」，新实例要把界面亮出来。
+    # 任务的动作里写死了 --minimized（供开机静默用），靠这个标记把手动双击区分开。
+    "_handover_show": False,
+    # 内部标记：「托盘图标被 Win11 收进 ^ 隐藏区」的说明只弹一次，别反复打扰
+    "_overflow_hint_acked": False,
 }
 # 注意：这里没有 start_minimized。
 # 「手动双击也要收进托盘」是个坑 —— 用户会以为程序没启动。现在只有开机自启
@@ -85,6 +97,8 @@ MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 1, 2, 4, 8, 0x4000
 WM_HOTKEY, WM_DESTROY = 0x0312, 0x0002
 VK_F1 = 0x70
 HWND_MESSAGE = -3
+
+MB_ICONINFORMATION, MB_ICONWARNING, MB_TOPMOST = 0x40, 0x30, 0x40000
 
 u32 = ctypes.WinDLL("user32", use_last_error=True)
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -139,6 +153,10 @@ WM_TRAYICON = 0x8000 + 1               # WM_APP + 1
 WM_LBUTTONUP, WM_LBUTTONDBLCLK, WM_RBUTTONUP = 0x0202, 0x0203, 0x0205
 TPM_RIGHTBUTTON, TPM_RETURNCMD, TPM_NONOTIFY = 0x0002, 0x0100, 0x0080
 MF_STRING, MF_SEPARATOR = 0x0000, 0x0800
+# 诊断弹窗用；argtypes 一定要声明，否则 64 位下 LPWSTR 会被截成 32 位
+u32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR,
+                            wintypes.LPCWSTR, wintypes.UINT]
+u32.MessageBoxW.restype = ctypes.c_int
 
 
 class GUID(ctypes.Structure):
@@ -157,9 +175,22 @@ class NOTIFYICONDATAW(ctypes.Structure):
                 ("hBalloonIcon", wintypes.HICON)]
 
 
+class NOTIFYICONIDENTIFIER(ctypes.Structure):
+    """Shell_NotifyIconGetRect 的入参。注意它和 NOTIFYICONDATAW 布局不同，
+    不能混用（中间少了 uFlags/uCallbackMessage/hIcon/szTip 这几段）。"""
+    _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
+                ("uID", wintypes.UINT), ("guidItem", GUID)]
+
+
 shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD,
                                       ctypes.POINTER(NOTIFYICONDATAW)]
 shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+try:
+    shell32.Shell_NotifyIconGetRect.argtypes = [ctypes.POINTER(NOTIFYICONIDENTIFIER),
+                                               ctypes.POINTER(wintypes.RECT)]
+    shell32.Shell_NotifyIconGetRect.restype = ctypes.c_long
+except AttributeError:      # 极老的系统没有这个导出，退化为"无法自检"
+    shell32.Shell_NotifyIconGetRect = None
 u32.CreatePopupMenu.restype = wintypes.HMENU
 u32.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t,
                             wintypes.LPCWSTR]
@@ -177,6 +208,17 @@ u32.LoadIconW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
 u32.LoadIconW.restype = wintypes.HANDLE
 u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
                              wintypes.LPARAM]
+u32.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
+u32.RegisterWindowMessageW.restype = wintypes.UINT
+
+# explorer（任务栏）重启或首次就绪时会广播这条消息。收到它必须重新 NIM_ADD，
+# 否则托盘图标会永久消失（开机自启最常撞到的就是这一条）。
+WM_TASKBARCREATED = u32.RegisterWindowMessageW("TaskbarCreated")
+
+# Win11 会把「未固定」的图标默认收进「隐藏的图标 ^」溢出区。
+# Shell_NotifyIconGetRect 拿到的 rect 若落在 ^ 按钮位置，就说明没固定上。
+NIIF_NONE = 0x0
+S_OK = 0
 
 HK_CLS = "SwapMonitorsTraySink"
 
@@ -386,6 +428,23 @@ class TrayThread(threading.Thread):
     def notify(self, title, text, warning=False):
         self.cmds.put(("notify", (title, text, warning)))
 
+    def reinit_tray(self):
+        """explorer 重启后重新挂托盘图标（由 UI 线程转发）。"""
+        self.cmds.put(("reinit", None))
+
+    # ---- 供 UI 线程查询（只读，无副作用）----
+    def icon_rect(self):
+        try:
+            return self._icon_rect()
+        except Exception:
+            return None
+
+    def promote_icon(self):
+        try:
+            return self._promote_icon()
+        except Exception:
+            return False
+
     def stop(self):
         self._stop = True
         self.cmds.put(("quit", None))
@@ -425,6 +484,68 @@ class TrayThread(threading.Thread):
         nid.szTip = self._tip_text()
         self.nid = nid
         return bool(shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)))
+
+    def _icon_rect(self):
+        """图标在屏幕上的矩形；拿不到返回 None。"""
+        if shell32.Shell_NotifyIconGetRect is None:
+            return None
+        ident = NOTIFYICONIDENTIFIER()
+        ident.cbSize = ctypes.sizeof(NOTIFYICONIDENTIFIER)
+        ident.hWnd = self.hwnd
+        ident.uID = 1
+        r = wintypes.RECT()
+        return r if shell32.Shell_NotifyIconGetRect(ctypes.byref(ident),
+                                                   ctypes.byref(r)) == S_OK else None
+
+    def _add_icon_with_retry(self, tries=6, delay=0.4):
+        """托盘就绪需要时间：explorer 刚起来时 NIM_ADD 会失败或落不到位，重试几轮。"""
+        for i in range(tries):
+            if self._add_icon():
+                if self._icon_rect() is not None:
+                    return True
+                # 加进去了但查不到矩形：可能还没画出来，再等等
+            else:
+                # 典型失败：Shell_NotifyIcon 拿不到 explorer 的窗口（开机太早）
+                self.nid = None
+            if i < tries - 1:
+                time.sleep(delay)
+        return bool(self.nid is not None and self._icon_rect() is not None)
+
+    def _promote_icon(self):
+        """Win11：把图标标记为「固定显示」，否则它只会躺在「^ 隐藏的图标」里。
+        写 HKCU 下 explorer 自己维护的记录；失败就只提示不加戏。"""
+        try:
+            import winreg
+            exe = os.path.abspath(sys.executable)
+            if not getattr(sys, "frozen", False):
+                return False
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Control Panel\NotifyIconSettings", 0,
+                                 winreg.KEY_READ | winreg.KEY_WRITE)
+            n = winreg.QueryInfoKey(key)[0]
+            hit = False
+            for i in range(n):
+                sub = winreg.EnumKey(key, i)
+                try:
+                    sk = winreg.OpenKey(key, sub, 0, winreg.KEY_READ | winreg.KEY_WRITE)
+                    path = str(winreg.QueryValueEx(sk, "ExecutablePath")[0])
+                except OSError:
+                    continue
+                if path.lower() == exe.lower():
+                    winreg.SetValueEx(sk, "IsPromoted", 0, winreg.REG_DWORD, 1)
+                    hit = True
+            return hit
+        except Exception:
+            return False
+
+    def _ensure_icon(self):
+        """注册托盘图标；成功后再判断它有没有被 Win11 收进溢出区。"""
+        if self.hwnd is None:
+            return
+        if self._add_icon_with_retry():
+            self.results.put(("tray_ok", True))
+        else:
+            self.results.put(("tray_ok", False))
 
     def _tip_text(self):
         hk = self._shown_hk or "未设热键"
@@ -471,6 +592,11 @@ class TrayThread(threading.Thread):
         if msg == WM_HOTKEY:
             self.results.put(("hotkey", None))
             return True
+        if msg == WM_TASKBARCREATED and WM_TASKBARCREATED:
+            # explorer 重启 / 任务栏刚就绪：之前注册的图标已经没了，必须重加
+            self.nid = None
+            self.results.put(("tray_reinit", None))
+            return True
         if msg == WM_TRAYICON:
             ev = int(lp) & 0xFFFF
             if ev in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
@@ -486,7 +612,7 @@ class TrayThread(threading.Thread):
             self.results.put(("hk_fail", "无法创建托盘/热键窗口"))
             return
         self.hicon = self._load_icon()
-        self.results.put(("tray_ok", self._add_icon()))
+        self._ensure_icon()
         msg = MSG()
         while not self._stop:
             while u32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):  # PM_REMOVE
@@ -497,6 +623,8 @@ class TrayThread(threading.Thread):
                     op, val = self.cmds.get_nowait()
                     if op == "set":
                         self._apply(val)
+                    elif op == "reinit":
+                        self._ensure_icon()
                     elif op == "notify":
                         self._balloon(*val)
                     elif op == "quit":
@@ -646,6 +774,390 @@ def sync_autostart_if_moved():
         return False
 
 
+# ============================================================ 单实例守卫
+
+# 一个进程只能有一份：否则用户"双击 exe"会在托盘里堆出第二个图标，
+# 而且管理员模式交棒时新旧两个实例会互相打架。
+# 用「本地命名互斥体」而不是 Global\：Global\ 需要 SeCreateGlobalPrivilege，
+# 普通用户拿不到，会直接失败；两个实例都在同一个交互会话里，Local\ 足够。
+_SINGLE_MUTEX = None            # 句柄必须一直握着，句柄一关就相当于释放了
+_SINGLE_MUTEX_NAME = ""         # 记下实际用的名字，--diag 里能看见
+_SINGLE_MUTEX_NOTE = "（尚未尝试）"   # 失败原因。**绝不能静默吞掉** ——
+# 「单实例悄悄失效」的表现是"双击后冒出第二个托盘图标"，肉眼很难联想到互斥体，
+# 所以这里把出错信息留在全局里，由 --diag 打印出来。
+
+
+def single_mutex_name():
+    """互斥体名。单独抽出来是为了 --diag 能显示它、也方便测试断言。"""
+    return "Local\\SwapMonitors_" + (_current_user_sid() or "default")
+
+
+def _acquire_single_instance():
+    """True = 本进程是唯一实例；False = 已经有一个在跑。"""
+    global _SINGLE_MUTEX, _SINGLE_MUTEX_NAME, _SINGLE_MUTEX_NOTE
+    try:
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        k.CreateMutexW.restype = wintypes.HANDLE
+        name = single_mutex_name()
+        _SINGLE_MUTEX_NAME = name
+        h = k.CreateMutexW(None, False, name)
+        err = ctypes.get_last_error()
+        if not h:
+            _SINGLE_MUTEX_NOTE = f"CreateMutexW 失败，GetLastError={err}"
+            return True          # 互斥体都建不出来（权限/内核对象耗尽）就别挡着程序跑
+        _SINGLE_MUTEX = h        # 故意泄漏句柄，进程退出时由系统回收
+        _SINGLE_MUTEX_NOTE = (f"已创建，last_error={err}"
+                              + ("（该名字已存在 → 不是唯一实例）" if err == 183 else ""))
+        return err != 183        # ERROR_ALREADY_EXISTS
+    except Exception as e:                                   # noqa: BLE001
+        _SINGLE_MUTEX_NOTE = f"{type(e).__name__}: {e}"
+        return True
+
+
+def _release_single_instance():
+    """交棒前主动让位：任务拉起的新实例得能拿到互斥体，否则它一启动就自杀。"""
+    global _SINGLE_MUTEX
+    if _SINGLE_MUTEX:
+        try:
+            ctypes.WinDLL("kernel32").CloseHandle(_SINGLE_MUTEX)
+        except Exception:
+            pass
+        _SINGLE_MUTEX = None
+
+
+def _signal_show_existing():
+    """叫已经在跑的那一份把界面亮出来。"""
+    try:
+        os.makedirs(CFG_DIR, exist_ok=True)
+        with open(SHOW_FLAG, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+        return True
+    except Exception:
+        return False
+
+
+def _consume_show_flag():
+    """消费「亮出界面」旗标；返回是否消费到了。"""
+    try:
+        if os.path.exists(SHOW_FLAG):
+            os.remove(SHOW_FLAG)
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _clear_show_flag():
+    try:
+        if os.path.exists(SHOW_FLAG):
+            os.remove(SHOW_FLAG)
+    except OSError:
+        pass
+
+
+# ============================================================ 管理员模式（计划任务）
+
+# 「记住管理员模式」不是靠兼容性标记（那个每次启动都要弹 UAC，开机自启没人点就白搭），
+# 而是注册一个「以最高权限运行」的计划任务：由任务计划服务代为启动，全程不弹 UAC。
+TASK_NAME = "SwapMonitors-Elevated"
+
+
+def _task_exe():
+    """计划任务要拉起的 exe。frozen 是自己；源码方式用 pythonw。"""
+    return _autostart_exe()
+
+
+def _task_xml():
+    """生成任务 XML。
+
+    - LogonTrigger：登录即启动，等价于开机自启（且免 UAC）
+    - RunLevel=HighestAvailable：以最高权限运行，这就是「记住管理员模式」
+    - 抓当前用户的 SID 作 Principal，任务才允许在该用户会话里跑 GUI
+    """
+    exe = _task_exe()
+    sid = _current_user_sid()
+    # 用 --minimized 让自启时静默进托盘；任务触发器不会带上这个参数，
+    # 所以写进 Arguments。
+    xml = f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>多屏窗口互换：以管理员权限启动，避免每次弹 UAC。</Description>
+    <URI>\\{TASK_NAME}</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>{sid}</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{sid}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{exe}</Command>
+      <Arguments>--minimized</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
+    return xml
+
+
+def _current_user_sid():
+    """取当前用户 SID（形如 S-1-5-21-...），任务 Principal 里要用它。"""
+    try:
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.GetCurrentProcess.restype = wintypes.HANDLE
+        k.GetCurrentProcess.argtypes = []
+        advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                              ctypes.POINTER(wintypes.HANDLE)]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                                 wintypes.LPVOID, wintypes.DWORD,
+                                                 ctypes.POINTER(wintypes.DWORD)]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.ConvertSidToStringSidW.argtypes = [wintypes.LPVOID,
+                                                    ctypes.POINTER(wintypes.LPWSTR)]
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        tok = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(k.GetCurrentProcess(), 0x0008, ctypes.byref(tok)):
+            return ""
+        try:
+            n = wintypes.DWORD()
+            advapi32.GetTokenInformation(tok, 1, None, 0, ctypes.byref(n))  # TokenUser
+            buf = ctypes.create_string_buffer(n.value)
+            if not advapi32.GetTokenInformation(tok, 1, buf, n.value, ctypes.byref(n)):
+                return ""
+            sid_ptr = ctypes.cast(buf, ctypes.POINTER(wintypes.LPVOID))[0]
+            s = wintypes.LPWSTR()
+            if not advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(s)):
+                return ""
+            try:
+                return s.value or ""
+            finally:
+                ctypes.WinDLL("kernel32").LocalFree(s)
+        finally:
+            k.CloseHandle(tok)
+    except Exception:
+        return ""
+
+
+def _schtasks_exe():
+    """优先用绝对路径：极少数环境下 PATH 被改过，裸 "schtasks" 会找不到。"""
+    p = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                     "System32", "schtasks.exe")
+    return p if os.path.exists(p) else "schtasks"
+
+
+def _decode_console(b):
+    """控制台输出解码。
+
+    坑：`schtasks /query /xml` 是把 XML **直接以 UTF-16LE 写 stdout** 的，
+    用 mbcs 解出来是一堆带 \\x00 的乱码 —— 于是 "HighestAvailable" 永远搜不到，
+    「管理员模式」会被误判为没生效。所以先嗅探 BOM / 大量 NUL 再决定解码方式。
+    """
+    if not b:
+        return ""
+    if b[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        try:
+            return b[2:].decode("utf-16-le", errors="replace") if b[:2] == b"\xff\xfe" \
+                else b[2:].decode("utf-16-be", errors="replace")
+        except Exception:
+            pass
+    elif len(b) > 8 and b.count(b"\x00") > len(b) // 4:
+        try:
+            return b.decode("utf-16-le", errors="replace").replace("\ufeff", "")
+        except Exception:
+            pass
+    for enc in ("mbcs", "utf-8", "gbk"):
+        try:
+            return b.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return b.decode("latin-1", errors="replace")
+
+
+def _run_schtasks(args):
+    """调 schtasks 并回传 (返回码, 输出)。用 CREATE_NO_WINDOW 免得闪黑窗。"""
+    import subprocess
+    try:
+        p = subprocess.run([_schtasks_exe()] + args, capture_output=True,
+                           timeout=30, creationflags=0x08000000)
+        return p.returncode, _decode_console((p.stdout or b"") + (p.stderr or b""))
+    except Exception as e:
+        return -1, str(e)
+
+
+def _task_xml_text():
+    """查任务的 XML 原文；查不到返回空串。"""
+    rc, out = _run_schtasks(["/query", "/tn", TASK_NAME, "/xml"])
+    return out if rc == 0 else ""
+
+
+def task_exists():
+    rc, _ = _run_schtasks(["/query", "/tn", TASK_NAME])
+    return rc == 0
+
+
+def task_runlevel_is_highest():
+    """已存在的任务是不是「最高权限」；查不到就当不是。"""
+    return "HighestAvailable" in _task_xml_text()
+
+
+def task_points_to_current_exe():
+    m = re.search(r"<Command>(.*?)</Command>", _task_xml_text(), re.S)
+    if not m:
+        return False
+    return _same_path(m.group(1).strip(), _task_exe())
+
+
+def create_elevated_task():
+    """创建/更新「最高权限」计划任务。必须已在管理员权限下调用，否则 schtasks 会失败。"""
+    import tempfile
+    xml = _task_xml()
+    fd, path = tempfile.mkstemp(suffix=".xml", prefix="swapmon_task_")
+    try:
+        # 必须 utf-16（带 BOM）：XML 头里写的是 UTF-16，schtasks 认 BOM 决定编码。
+        # 写成 UTF-8 会被 `schtasks /create /xml` 拒掉（中文描述直接变乱码/报错）。
+        with os.fdopen(fd, "w", encoding="utf-16") as f:
+            f.write(xml)
+        rc, out = _run_schtasks(["/create", "/tn", TASK_NAME, "/xml", path, "/f"])
+        if rc != 0:
+            return False, out
+        # 再查一遍，确认系统真的把 RunLevel 落进去了（个别策略会静默忽略）
+        if not task_runlevel_is_highest():
+            return False, ("任务已写入，但查回来的不是「最高权限」。\n"
+                           "多半是组策略限制了任务权限，或系统任务是别人建的。\n"
+                           + out.strip()[-300:])
+        return True, out
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _diag_report():
+    """--diag 的输出：把诊断行印出来，方便用户复制回来。
+
+    打包成 --windowed 的 exe 后**没有控制台**（此时 sys.stdout 是 None）；
+    但只要是从 cmd/PowerShell 里调用，stdout 就是有效管道，能直接打印。
+    所以判据是「有没有可用的 stdout」，而不是「是不是打包过」——
+    否则从命令行跑也会弹个窗，脚本里根本没法用。
+    """
+    txt = verify_elevated_task()
+    printed = False
+    if sys.stdout is not None:
+        try:
+            sys.stdout.write(txt + "\n")
+            sys.stdout.flush()
+            printed = True
+        except Exception:
+            pass
+    if not printed:
+        # 双击运行、没有控制台：只能弹窗，否则用户什么都看不到
+        try:
+            u32.MessageBoxW(None, txt, f"{APP_TITLE} 诊断信息",
+                            MB_ICONINFORMATION | MB_TOPMOST)
+        except Exception:
+            pass
+    return 0
+
+
+def delete_elevated_task():
+    rc, out = _run_schtasks(["/delete", "/tn", TASK_NAME, "/f"])
+    return rc == 0, out
+
+
+def start_elevated_task():
+    """立即通过任务拉起一个最高权限实例（不弹 UAC）。返回是否成功。"""
+    rc, out = _run_schtasks(["/run", "/tn", TASK_NAME])
+    return rc == 0, out
+
+
+def sync_task_if_moved():
+    """exe 换位置后任务里的 Command 就失效了，能改就改。
+
+    更新任务需要管理员权限；没有权限就什么都不做（留给下次以管理员运行时修）。
+    """
+    try:
+        xml = _task_xml_text()
+        if not xml:
+            return False
+        m = re.search(r"<Command>(.*?)</Command>", xml, re.S)
+        if m and _same_path(m.group(1).strip(), _task_exe()) and "HighestAvailable" in xml:
+            return False                 # 已经是我们要的样子，不用动
+        if not is_elevated():
+            return False
+        ok, _ = create_elevated_task()
+        return ok
+    except Exception:
+        return False
+
+
+def verify_elevated_task():
+    """把「管理员模式」的当前实况拼成一行行文字，便于自检 / 排错。"""
+    # 真的抢一次互斥体：这一步能顺手告诉我们「现在是否已经有实例在跑」，
+    # 也是排查「双击冒出第二个托盘图标」这类问题的唯一线索。
+    try:
+        uniq = _acquire_single_instance()
+        lock_msg = ("抢到（当前没有别的实例在运行）" if uniq
+                    else "没抢到（已经有实例在运行）")
+        _release_single_instance()
+    except Exception as e:                                   # noqa: BLE001
+        lock_msg = f"抢锁异常 {type(e).__name__}: {e}"
+
+    lines = []
+    try:
+        lines.append(f"程序版本: {APP_VER}")
+        lines.append(f"可执行文件: {sys.executable}")
+        lines.append(f"frozen(打包运行): {bool(getattr(sys, 'frozen', False))}")
+        lines.append(f"配置文件: {CFG_PATH}")
+        lines.append(f"当前是否管理员: {is_elevated()}")
+        lines.append(f"计划任务名: {TASK_NAME}")
+        lines.append(f"计划任务存在: {task_exists()}")
+        lines.append(f"任务为最高权限: {task_runlevel_is_highest()}")
+        lines.append(f"任务指向当前程序: {task_points_to_current_exe()}")
+        lines.append(f"任务要拉起的程序: {_task_exe()}")
+        lines.append(f"开机自启 .cmd 存在: {os.path.exists(AUTOSTART_CMD)}")
+        lines.append(f"单实例互斥体名: {single_mutex_name()}")
+        lines.append(f"单实例本次抢锁: {lock_msg}")
+        lines.append(f"单实例状态: {_SINGLE_MUTEX_NOTE}")
+        lines.append(f"用户 SID: {_current_user_sid() or '（取不到！）'}")
+        cfg = load_cfg()
+        lines.append(f"配置 run_as_admin: {cfg.get('run_as_admin')}")
+        lines.append(f"配置 autostart: {cfg.get('autostart')}")
+    except Exception as e:                                  # noqa: BLE001
+        lines.append(f"诊断过程出错: {e}")
+    return "\n".join(lines)
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -660,6 +1172,9 @@ class App:
         self.hidden = False        # 是否已收进托盘
         self.tray_hint_shown = False
         self.tray_ok = False       # Shell_NotifyIcon(NIM_ADD) 是否成功
+        self._overflow_hinted = False   # 「图标被收进 ^ 溢出区」是否已提示过
+        self._tray_beat = 0        # 托盘心跳计数：定期确认图标还在
+        self._tray_reinit_left = 10   # 心跳重挂的次数上限，防止无意义地一直重试
         self._hiding = False       # 防止 <Unmap> 递归
         self.perm = {}             # {源屏(1起): 目标屏(1起)} 哪块屏送往哪块屏
         self._perm_n = None        # 上次初始化排列时的屏数，屏数变了要重新校验
@@ -682,6 +1197,9 @@ class App:
         # 静默重写一遍。程序换目录/换盘之后正常跑一次就自动跟上，不用手动关再开。
         if self.cfg.get("autostart"):
             self.root.after(200, self._autostart_selfheal)
+        # 管理员模式自愈：补建/更新/清理计划任务，让「记住管理员」真的记住
+        if self.cfg.get("run_as_admin") or self.cfg.get("_pending_admin_setup"):
+            self.root.after(300, self._admin_selfheal)
 
     def _autostart_selfheal(self):
         try:
@@ -854,12 +1372,15 @@ class App:
         self.focus_var = tk.BooleanVar(value=self.cfg["restore_focus"])
         self.notify_var = tk.BooleanVar(value=self.cfg["notify_on_swap"])
         self.auto_var = tk.BooleanVar(value=self.cfg["autostart"])
+        self.admin_var = tk.BooleanVar(value=self.cfg["run_as_admin"])
         for var, text, cmd in (
                 (self.skipmin_var, "跳过最小化窗口", self._save),
                 (self.scale_var, "分辨率不同的屏之间等比缩放（否则纯平移）", self._save),
                 (self.focus_var, "互换后把焦点还给原来的窗口", self._save),
                 (self.notify_var, "互换完成后弹出提示（托盘气泡）", self._save),
-                (self.auto_var, "开机自动启动（开机后静默待在托盘）", self.set_autostart)):
+                (self.auto_var, "开机自动启动（开机后静默待在托盘）", self.set_autostart),
+                (self.admin_var, "记住管理员模式（管理员窗口也能搬，启动不再弹 UAC）",
+                 self.set_run_as_admin)):
             Toggle(opts, text, var, cmd).pack(anchor="w", pady=1)
 
         right = ttk.Frame(bot)
@@ -957,6 +1478,9 @@ class App:
                 self.elev_btn.configure(state="disabled")
             except Exception:
                 pass
+        elif self.cfg.get("run_as_admin"):
+            self.perm_lbl.configure(text="权限：普通用户（已设管理员模式，重启后生效）",
+                                    foreground=C_WARN)
         else:
             self.perm_lbl.configure(text="权限：普通用户（管理员窗口搬不动）",
                                     foreground=C_WARN)
@@ -971,10 +1495,13 @@ class App:
             self.hk.stop()
             self.hk = None
             time.sleep(0.25)
+        # 把单实例互斥体让出去：提权后的新实例和本进程是两份，不让位它会被守卫挡回去。
+        _release_single_instance()
         if relaunch_as_admin():
             self.set_status("已请求提权，正在以管理员身份重启…")
             self.root.after(250, self._exit_now)
         else:
+            _acquire_single_instance()   # 提权没成功，互斥体得收回来
             messagebox.showwarning(
                 APP_TITLE,
                 "提权没有成功（多数情况是你在 UAC 弹窗上点了「否」）。\n\n"
@@ -1007,6 +1534,146 @@ class App:
         except Exception as e:  # noqa: BLE001
             messagebox.showwarning(APP_TITLE, f"修改开机自启失败：{e}", parent=self.root)
 
+    # ---------- 记住管理员模式 ----------
+    def set_run_as_admin(self):
+        """勾选/取消「记住管理员模式」。
+
+        开启时要建一个「最高权限」计划任务 —— 这一步本身需要管理员权限，
+        所以未提权时就先引导用户以管理员身份重启一次，重启后自动完成创建。
+        """
+        on = self.admin_var.get()
+        if on:
+            if not is_elevated():
+                self.admin_var.set(False)
+                self._save()
+                if self._prompt_elevate_for_admin():
+                    return
+                return
+            ok, out = create_elevated_task()
+            if ok:
+                self.cfg["run_as_admin"] = True
+                self._save()
+                # 任务已经在「登录时」自动拉起，旧的 Startup\*.cmd 就成了重复入口，
+                # 留着会拉起两个实例（一个普通一个管理员），必须清掉。
+                self._remove_startup_cmd()
+                self.auto_var.set(False)
+                self.cfg["autostart"] = False
+                self._save()
+                self.set_status("已记住管理员模式：开机与双击都将是管理员（不再弹 UAC）")
+                self.update_perm_label()
+            else:
+                self.admin_var.set(False)
+                self._save()
+                messagebox.showwarning(
+                    APP_TITLE,
+                    "创建「最高权限」计划任务失败。\n\n"
+                    "常见原因：当前不是管理员，或系统策略禁止创建任务。\n\n"
+                    f"系统返回：{out.strip()[:300]}",
+                    parent=self.root)
+            return
+        # 关闭：删掉任务，并同步关掉「开机自启」（那是任务在管的事）
+        self.cfg["run_as_admin"] = False
+        self._save()
+        if task_exists():
+            ok, out = delete_elevated_task()
+            if not ok and is_elevated():
+                messagebox.showwarning(APP_TITLE,
+                                       f"删除计划任务失败：{out.strip()[:200]}",
+                                       parent=self.root)
+                return
+        self.set_status("已关闭管理员模式，下次启动恢复为普通权限")
+
+    def _remove_startup_cmd(self):
+        try:
+            if os.path.exists(AUTOSTART_CMD):
+                os.remove(AUTOSTART_CMD)
+        except Exception:
+            pass
+
+    def _prompt_elevate_for_admin(self):
+        """未提权时询问是否顺手提权重启以创建任务；返回 True 表示已发起重启。"""
+        if not messagebox.askyesno(
+                APP_TITLE,
+                "「记住管理员模式」需要创建一条「以最高权限运行」的计划任务，"
+                "这一步本身需要管理员权限。\n\n"
+                "现在以管理员身份重启一次来完成设置吗？\n"
+                "（这次会弹一次 UAC，之后启动就再也不弹了）",
+                parent=self.root):
+            self.set_status("已取消：未开启管理员模式")
+            return False
+        # 标记"本次提权是为了落实管理员模式"，提权后的实例凭它自动补建任务
+        self._pending_admin_setup = True
+        self._save()
+        self.elevate()
+        return True
+
+    def _admin_selfheal(self):
+        """启动时的管理员模式自愈，四种情况：
+
+        1. 上次发起了「为管理员模式提权重启」，且这次真的拿到了管理员 → 补建任务
+        2. 配置开着、任务却不在（被删/换机器）→ 以管理员身份补建
+        3. 配置开着、任务在，但 exe 换了位置 → 按新位置更新任务
+        4. 配置关了、任务还残留 → 删掉，免得下次登录又冒出个管理员实例
+
+        注意 1 和 2 的区别：**pending 阶段 run_as_admin 还是 False**
+        （`set_run_as_admin` 只在任务真的建成之后才把它置 True），
+        所以这两件事必须分开判断，否则提权重启回来什么也不会发生。
+        """
+        want = bool(self.cfg.get("run_as_admin"))
+        pending = bool(self.cfg.get("_pending_admin_setup"))
+
+        if pending:
+            # 待办一律就地清掉：不管这次提权成没成，都不能留个"永远待办"。
+            self.cfg["_pending_admin_setup"] = False
+            self._save()
+            if not is_elevated():
+                # 用户在 UAC 上点了「否」，或者提权被策略拦了 —— 保持关闭状态
+                self.admin_var.set(False)
+                self.cfg["run_as_admin"] = False
+                self._save()
+                self.set_status("未取得管理员权限，管理员模式未开启")
+                return
+            ok, out = create_elevated_task()
+            if ok:
+                self.cfg["run_as_admin"] = True
+                self.admin_var.set(True)
+                # 任务已在「登录时」自动拉起，旧的 Startup\*.cmd 就成了重复入口，
+                # 留着会拉起两个实例（一个普通一个管理员），必须清掉。
+                self._remove_startup_cmd()
+                self.auto_var.set(False)
+                self.cfg["autostart"] = False
+                self._save()
+                self.update_perm_label()
+                self.set_status("管理员模式已生效：开机与双击都将是管理员（不再弹 UAC）")
+            else:
+                self.admin_var.set(False)
+                self.cfg["run_as_admin"] = False
+                self._save()
+                self.set_status("管理员模式设置失败（已保持关闭）")
+                messagebox.showwarning(
+                    APP_TITLE,
+                    "创建「最高权限」计划任务失败，管理员模式没有开启。\n\n"
+                    "常见原因：系统策略禁止创建计划任务，或杀软拦截了 schtasks。\n\n"
+                    f"系统返回：{str(out).strip()[:300]}",
+                    parent=self.root)
+            return
+
+        if want:
+            if not task_exists():
+                if is_elevated():
+                    ok, _ = create_elevated_task()
+                    if ok:
+                        self._remove_startup_cmd()
+                        self.auto_var.set(False)
+                        self.cfg["autostart"] = False
+                        self._save()
+                        self.set_status("已重建管理员模式计划任务（之前缺失或已失效）")
+            elif sync_task_if_moved():
+                self.set_status("计划任务已按程序新位置更新")
+        else:
+            if task_exists() and is_elevated():
+                delete_elevated_task()
+
     # ---------- 数据刷新 ----------
     def refresh(self):
         ns = self._make_args()
@@ -1024,7 +1691,8 @@ class App:
             self.tree.insert("", "end", values=(
                 f"屏{w['monitor']}", w["state"],
                 f"{w['left']},{w['top']}  {w['width']}×{w['height']}",
-                w["proc"] or "（管理员进程）", w["title"], ""), tags=("odd",) if i % 2 else ())
+                w["proc"] or "（管理员进程）", w.get("label") or w["title"], ""),
+                tags=("odd",) if i % 2 else ())
         self.count_lbl.configure(text=f"共 {len(self.wins)} 个窗口　·　{self._map_desc()}")
         self.set_status("已刷新")
         return data
@@ -1297,8 +1965,94 @@ class App:
         if self.hidden and self.hk and self.notify_var.get():
             self.hk.notify(APP_TITLE, f"{msg}\n{tail}")
 
+    # ---------- 托盘溢出区（Win11）----------
+    def _overflow_left(self):
+        """「隐藏的图标」面板左边界；拿不到返回 None。用它判断图标是不是被收进去了。"""
+        try:
+            h = u32.FindWindowW("TopLevelWindowForOverflowXamlIsland", None)
+            if not h:
+                return None
+            r = wintypes.RECT()
+            if not u32.GetWindowRect(h, ctypes.byref(r)):
+                return None
+            return r.left
+        except Exception:
+            return None
+
+    def _overflow_hint(self, tip):
+        """提示用户把图标从 ^ 里拖出来。
+
+        实测结论（2026-10-11，Win11 + 自动隐藏任务栏）：
+          * `IsPromoted=1` 写进 HKCU\\Control Panel\\NotifyIconSettings 后**不会立刻生效**
+            —— explorer 在图标创建时读的是自己内存里的缓存，而且在图标被删掉时
+            还会把缓存里的状态写回注册表，把我们写的值覆盖掉。
+          * 所以唯一**确实管用**的办法是用户手动把图标从 ^ 拖到任务栏上，
+            拖一次之后由 explorer 自己记住。别再承诺「已自动置顶」了。
+        """
+        if self.cfg.get("_overflow_hint_acked"):
+            return
+        self.cfg["_overflow_hint_acked"] = True
+        self._save()
+        if self.hidden:
+            # 开机自启、界面收在托盘里：只能发气泡，别弹窗打扰
+            if self.hk:
+                self.hk.notify(APP_TITLE, tip, warning=True)
+        else:
+            messagebox.showinfo(APP_TITLE, tip + "\n\n（这条提示只出现一次）",
+                                parent=self.root)
+
+    def _maybe_hint_overflow(self, attempt=0):
+        """图标虽然注册成功，但 Win11 默认会把它塞进 ^ 溢出区。
+
+        两个坑：
+        - `TopLevelWindowForOverflowXamlIsland` 是**懒创建**的，程序刚起来时
+          它还不存在，只查一次必然查不到 —— 所以要隔一会儿重试几轮。
+        - 开机自启的实例界面是收进托盘的，状态栏文字用户根本看不见 ——
+          所以要弹一次说明（隐藏状态下退化成气泡通知）。
+        """
+        if self._overflow_hinted:
+            return
+        rect = self.hk.icon_rect() if self.hk else None
+        left = self._overflow_left()
+        if rect is None or left is None:
+            if attempt < 8:
+                self.root.after(1500, lambda: self._maybe_hint_overflow(attempt + 1))
+            return
+        if rect.left < left:
+            return                      # 已在可见区，不用管
+        self._overflow_hinted = True
+        # 顺手把「固定显示」标记写上（对下次 explorer 重启/重新登录有用），
+        # 但不能指望它当场生效，所以提示文案不依赖它的返回值
+        if self.hk:
+            self.hk.promote_icon()
+        self.set_status("托盘图标已就绪（在 ^ 隐藏区里，拖出来一次即可固定）")
+        self._overflow_hint(
+            "托盘图标已经注册好了，但被 Win11 放进了任务栏的「^ 隐藏的图标」里，"
+            "所以你在托盘上看不到它。\n\n"
+            "解决办法（一次就够）：\n"
+            "  1. 点任务栏右下角的  ^\n"
+            "  2. 在弹出的面板里找到「多屏窗口互换」\n"
+            "  3. 把它拖到任务栏上（或右键选「固定到任务栏」）\n\n"
+            "之后它就会一直显示在那里；热键不受影响，随时可用。")
+
     # ---------- 事件循环 ----------
     def _poll(self):
+        # 第二个实例被单实例守卫挡下时会留下旗标，代表"用户又点了一次图标"，
+        # 这里消费掉并把界面亮出来 —— 双击 exe 就等于把已运行的窗口叫到前台。
+        if _consume_show_flag():
+            self.show_window()
+        # 托盘心跳：每 ~20 秒确认一次图标还在。开机自启那一份偶尔会赶上
+        # explorer 还没就绪，图标要么没挂上、要么后面被系统悄悄清掉 ——
+        # 这里发现「已经注册成功但现在查不到矩形」就重挂一次，用户不用手动重启程序。
+        self._tray_beat += 1
+        if self._tray_beat >= 250:                  # 250 × 80ms ≈ 20s
+            self._tray_beat = 0
+            if self.tray_ok and self.hk and self.hk.icon_rect() is None:
+                if self._tray_reinit_left > 0:
+                    self._tray_reinit_left -= 1
+                    self.hk.reinit_tray()
+                    if not self._tray_reinit_left:
+                        self.set_status("托盘图标反复挂不上，热键照常可用（可试着重启一下资源管理器）")
         try:
             while True:
                 ev, val = self.q.get_nowait()
@@ -1316,6 +2070,12 @@ class App:
                     self._hk_label(ok=True)
                     if not val:
                         self.set_status("托盘图标创建失败（热键仍可用）")
+                    else:
+                        self._maybe_hint_overflow()
+                elif ev == "tray_reinit":
+                    # 收到的是 TrayThread 的回传，转成命令让它自己重挂
+                    if self.hk:
+                        self.hk.reinit_tray()
                 elif ev == "hk_fail":
                     self.hk_state.configure(text=f"✗ {val}", foreground=C_WARN)
                 elif ev == "tray_show":
@@ -1354,6 +2114,7 @@ class App:
             "autostart": bool(self.auto_var.get()),
             "notify_on_swap": bool(self.notify_var.get()),
             "permute": {str(k): v for k, v in sorted(self.perm.items())},
+            "run_as_admin": bool(self.admin_var.get()),
         })
         # 只落已知的键 —— 顺便把老版本留下的 start_minimized 之类陈旧配置清掉，
         # 否则它会一直躺在那儿让人误以为是有效的设置
@@ -1446,8 +2207,51 @@ def run_with_args(ns):
 # ============================================================ 入口
 
 
+def _maybe_hand_over_to_admin(startup_min):
+    """「记住管理员模式」的启动接管。
+
+    配置里开着 run_as_admin，但当前实例是普通权限（比如用户直接双击了 exe，
+    而不是走计划任务），就通过计划任务把真正的工作实例以管理员拉起，然后自己退出。
+    这样"双击 exe"和"开机自启"两条路都能稳稳定在管理员模式。
+
+    返回 True 表示已经交棒，调用方应当立刻结束本进程。
+    """
+    cfg = load_cfg()
+    if not cfg.get("run_as_admin"):
+        return False
+    if is_elevated():
+        return False                 # 已经是管理员（多半就是任务拉起来的），正常跑
+    if not task_exists():
+        return False                 # 任务还没建好，先按普通权限跑，等自愈补建
+    # 任务的动作固定带 --minimized（开机静默用）。手动双击时得让新实例
+    # 知道"这次要显示界面"，所以先把旗标写进配置，交棒后再清掉。
+    if not startup_min:
+        cfg["_handover_show"] = True
+        save_cfg({k: cfg[k] for k in DEFAULT_CFG if k in cfg})
+    # 让位给即将被任务拉起的实例：不释放互斥体的话，它一启动就撞上单实例守卫，
+    # 会以为"已经有一个在跑"然后自杀，结果谁也起不来。
+    _release_single_instance()
+    ok, _ = start_elevated_task()
+    if not ok:
+        cfg["_handover_show"] = False
+        save_cfg({k: cfg[k] for k in DEFAULT_CFG if k in cfg})
+        _acquire_single_instance()   # 交棒失败，把互斥体拿回来自己用
+        return False
+    # 给自己一点时间让新实例起来，避免托盘/热键出现空档
+    time.sleep(0.6)
+    return True
+
+
 def main():
+    # 窗口标题里有 GBK 编不出来的字符时，print 会把程序崩掉 —— 先给控制台打上补丁。
+    # （GUI 本身不 print，但 --list/--diag 这些命令行路径会。）
+    try:
+        sw._harden_console()
+    except Exception:
+        pass
     argv = sys.argv[1:]
+    if "--diag" in argv:
+        return _diag_report()
     # --minimized 只由「开机自启」那个启动项传进来。
     # 手动双击**不带**这个参数，所以一定会看到界面 —— 不会出现「点了没反应、
     # 以为没启动」的情况。用户点 X 之后才收进托盘。
@@ -1456,6 +2260,18 @@ def main():
     if argv:                       # 带实际参数 → 命令行模式，透传给核心脚本
         return sw.main(argv)
 
+    # 单实例守卫必须放在交棒**之前**：
+    # 若「任务拉起的实例」已经在跑，交棒会扑空（任务策略是 IgnoreNew），
+    # 结果是双击 exe 什么都不发生。先抢互斥体失败 → 直接把老实例叫到前台。
+    if not _acquire_single_instance():
+        _signal_show_existing()
+        return 0
+    _consume_show_flag()           # 清掉可能残留的旧旗标，免得开机时莫名冒出窗口
+
+    # 「记住管理员模式」：非管理员时交棒给计划任务拉起的实例
+    if _maybe_hand_over_to_admin(startup_min):
+        return 0
+
     root = tk.Tk()
     # 先藏起来再建界面。
     # 因为 App.__init__ 里为了量高度会调 update_idletasks()，那一下会把窗口映射出来，
@@ -1463,6 +2279,11 @@ def main():
     root.withdraw()
     app = App(root)
     app.start_hotkey()
+    # 交棒过来的实例：任务动作带的是 --minimized，但这个旗标说明该显示界面
+    if app.cfg.get("_handover_show"):
+        app.cfg["_handover_show"] = False
+        app._save()
+        startup_min = False
     if startup_min:
         app.hidden = True            # 开机自启：静默待在托盘里
         app.tray_hint_shown = True

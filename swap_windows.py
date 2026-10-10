@@ -133,6 +133,10 @@ kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
 GWL_STYLE, GWL_EXSTYLE = -16, -20
 WS_POPUP, WS_VISIBLE, WS_EX_TOOLWINDOW = 0x80000000, 0x10000000, 0x00000080
+WS_CAPTION = 0x00C00000          # 有标题栏 = 是"能拖动的正常窗口"的最强信号
+# 无标题窗口（Electron 主窗、部分游戏/工具壳）只有够大才当窗口看，
+# 免得把输入法候选框、隐形辅助窗这类小尺寸伪窗口也搬走。
+UNTITLED_MIN_W, UNTITLED_MIN_H = 160, 120
 SW_MAXIMIZE, SW_MINIMIZE, SW_NORMAL = 3, 6, 1
 SW_HIDE, SW_SHOWNORMAL, SW_SHOWMINIMIZED, SW_SHOWMAXIMIZED = 0, 1, 2, 3
 SW_SHOWNOACTIVATE, SW_RESTORE = 4, 9
@@ -225,6 +229,11 @@ class Win:
     def state(self):
         return self.place.showCmd
 
+    @property
+    def label(self):
+        """显示用名字：标题为空（Electron 主窗）时退回进程名，免得列表里一片空白。"""
+        return self.title if self.title.strip() else f"[无标题] {self.proc or self.cls}"
+
     def state_name(self):
         return {SW_SHOWMINIMIZED: "最小化", SW_SHOWMAXIMIZED: "最大化",
                 SW_SHOWNORMAL: "普通"}.get(self.state, str(self.state))
@@ -247,21 +256,36 @@ def enumerate_windows(monitors, skip_title, only_title=None, only_proc=None,
         if not user32.IsWindowVisible(hwnd):
             return True
         n = user32.GetWindowTextLengthW(hwnd)
-        if n <= 0:
-            return True
-        tbuf = ctypes.create_unicode_buffer(n + 1)
-        user32.GetWindowTextW(hwnd, tbuf, n + 1)
-        title = tbuf.value
+        if n > 0:
+            tbuf = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(hwnd, tbuf, n + 1)
+            title = tbuf.value
+        else:
+            # 标题为空不代表不是窗口：Electron（如 DSH Desktop）主窗常常不设标题。
+            # 这类窗口照样要能跟着屏一起搬家，所以不能一律丢掉 —— 改成用
+            # 「有标题栏 + 尺寸够大 + 不是工具窗」来判断它是不是一个正常窗口。
+            title = ""
         cbuf = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(hwnd, cbuf, 256)
         cls = cbuf.value
 
-        if cls in SKIP_CLASSES or skip_title.match(title.strip()):
+        if cls in SKIP_CLASSES or (title and skip_title.match(title.strip())):
             return True
-        if user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW:
+        exstyle = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        if exstyle & WS_EX_TOOLWINDOW:
             return True
         if is_cloaked(hwnd):
             return True
+
+        if not title:
+            style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+            r0 = RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(r0)):
+                return True
+            if not (style & WS_CAPTION):
+                return True
+            if r0.width < UNTITLED_MIN_W or r0.height < UNTITLED_MIN_H:
+                return True
 
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
@@ -525,11 +549,11 @@ def swap(args):
                 "swap_pair": sorted(s + 1 for s in perm) if len(perm) == 2 else [],
                 "windows": [{
                     "monitor": (w.mon + 1) if w.mon is not None else None,
-                    "state": w.state_name(), "title": w.title, "proc": w.proc,
-                    "pid": w.pid, **rect_json(w.rect),
+                    "state": w.state_name(), "title": w.title, "label": w.label,
+                    "proc": w.proc, "pid": w.pid, **rect_json(w.rect),
                 } for w in sorted(wins, key=lambda w: (w.mon if w.mon is not None else 9,
                                                        w.rect.left))],
-            }, ensure_ascii=False))
+            }, ensure_ascii=True))
             return 0
         print(f"DPI 感知模式: {DPI_MODE}\n")
         print("=== 显示器 ===")
@@ -541,7 +565,7 @@ def swap(args):
         for w in sorted(wins, key=lambda w: (w.mon if w.mon is not None else 9, w.rect.left)):
             tag = f"屏{(w.mon + 1) if w.mon is not None else '?'}"
             print(f"  {tag} {w.state_name():<4s} {w.rect!s:<28s} "
-                  f"{(w.proc or '管理员进程?'):<22s} {w.title[:48]!r}")
+                  f"{(w.proc or '管理员进程?'):<22s} {w.label[:48]!r}")
         return 0
 
     mode = "scale" if args.scale else ("translate" if args.translate_only else "auto")
@@ -594,7 +618,7 @@ def swap(args):
         say("没有需要互换的窗口。")
         payload["note"] = "没有需要互换的窗口"
         if jmode:
-            print(json.dumps(payload, ensure_ascii=False))
+            print(json.dumps(payload, ensure_ascii=True))
         return 0
 
     say("映射：" + "、".join(
@@ -602,13 +626,13 @@ def swap(args):
         for s, d in sorted(perm.items())))
     say("")
     for p in plan:
-        say(f"  [屏{p['si'] + 1}→屏{p['di'] + 1}] {p['w'].title[:44]!r} "
+        say(f"  [屏{p['si'] + 1}→屏{p['di'] + 1}] {p['w'].label[:44]!r} "
             f"{p['w'].state_name()} {p['base']!s} → {p['to']!s}")
 
     if args.dry_run:
         say(f"\n[dry-run] 共 {len(plan)} 个窗口，未做任何改动。")
         if jmode:
-            print(json.dumps(payload, ensure_ascii=False))
+            print(json.dumps(payload, ensure_ascii=True))
         return 0
 
     fg = user32.GetForegroundWindow()  # 互换过程会短暂改变前台窗口，结束后还原
@@ -618,7 +642,7 @@ def swap(args):
         ok, note = move_window(w, target, dst, not args.quiet)
         if not ok:
             warn += 1
-            msg = f"{w.title[:40]!r} {note}"
+            msg = f"{w.label[:40]!r} {note}"
             payload["errors"].append(msg)
             if w.proc is None:          # 读不到进程名 = 对方是管理员权限进程
                 denied += 1
@@ -626,7 +650,7 @@ def swap(args):
                 f"{'（管理员进程？试试用管理员身份运行）' if w.proc is None else ''}")
         else:
             ok_n += 1
-            say(f"  ✓ {w.title[:40]!r} → {target!s} {note}") if args.verbose else None
+            say(f"  ✓ {w.label[:40]!r} → {target!s} {note}") if args.verbose else None
     if fg and user32.IsWindow(fg) and user32.GetForegroundWindow() != fg:
         try:
             user32.SetForegroundWindow(fg)
@@ -637,14 +661,37 @@ def swap(args):
     payload["denied"] = denied          # 因权限（管理员进程）失败的个数
     payload["ok"] = warn == 0
     if jmode:
-        print(json.dumps(payload, ensure_ascii=False))
+        print(json.dumps(payload, ensure_ascii=True))
     else:
         print(f"\n完成：{ok_n}/{len(plan)} 个窗口已互换"
               + (f"，{warn} 个失败。" if warn else "。"))
     return 0 if warn == 0 else 2
 
 
+def _harden_console():
+    """让 print 永远别把程序搞崩。
+
+    踩过的坑（2026-10-11 实测，v1.1.3 的 exe 就是这么崩的）：
+    打包成 --windowed 的 exe 从 cmd 里跑时，`sys.stdout` 的编码是 **GBK(cp936)**。
+    窗口标题里只要有 GBK 编不出来的字符 —— 比如 Edge 标签页标题里的零宽空格
+    U+200B（`"Microsoft\\u200b Edge"`）—— `print` 就抛 UnicodeEncodeError 直接退出，
+    用户看到的是「exe 一闪而过 / 挂住不动」，而我们看到的是
+    `File "swap_windows.py", line 544, in swap`。
+
+    改成 `errors="replace"`：**编码保持不变**（中文控制台照旧显示正常），
+    编不出来的字符退化成 `?`，绝不崩。机器可读的 `--json` 另外用
+    `ensure_ascii=True` 输出纯 ASCII，从根上免疫编码问题。
+    """
+    for s in (sys.stdout, sys.stderr):
+        try:
+            if s is not None and hasattr(s, "reconfigure"):
+                s.reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
 def main(argv=None):
+    _harden_console()
     p = argparse.ArgumentParser(
         description="互换两块显示器上的全部窗口，保持相对布局。")
     p.add_argument("--list", action="store_true", help="列出显示器与待交换窗口")
