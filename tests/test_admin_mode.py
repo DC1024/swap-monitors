@@ -296,7 +296,12 @@ check("_handover_show=False 也照样写进去",
 check("DEFAULT_CFG 三个字段齐全",
       all(k in G.DEFAULT_CFG for k in ("run_as_admin", "_pending_admin_setup",
                                        "_handover_show")))
-check("版本号已升到 1.1.4", G.APP_VER == "1.1.4", G.APP_VER)
+# 别写死版本号：每发一版都得回来改一次，迟早会忘，然后测试红得莫名其妙。
+# 只要形如 x.y.z 且不低于 1.1.4 就算过。
+check("APP_VER 是合法的 x.y.z 且不低于 1.1.4",
+      bool(re.fullmatch(r"\d+\.\d+\.\d+", G.APP_VER))
+      and tuple(int(x) for x in G.APP_VER.split(".")) >= (1, 1, 4),
+      G.APP_VER)
 check("--diag 入口存在", callable(G._diag_report))
 
 

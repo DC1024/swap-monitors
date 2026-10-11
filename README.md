@@ -299,6 +299,7 @@ build_exe.bat
 
 ```bash
 python tests/test_map.py              # 映射逻辑与分辨率无关（纯数学，任何机器可跑）
+python tests/test_static.py           # 静态自检：有没有「引用了但没 import」的名字（任何机器可跑）
 python tests/test_elevate.py          # 提权重启前的 PyInstaller 环境清洗（纯逻辑，任何机器可跑）
 python tests/test_autostart.py        # 开机自启的「换位置自愈」逻辑（写临时目录，不碰真实启动项）
 python tests/test_admin_mode.py       # 托盘 TaskbarCreated/图标矩形、空标题窗口、计划任务XML与单实例互斥体

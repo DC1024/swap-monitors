@@ -27,14 +27,22 @@ import swap_windows as sw  # noqa: E402
 # (标题, 屏序号(1 起), 相对该屏左上角的 x, y, 宽, 高)
 #
 # 标题一律用通用示例，避免泄露真实信息。
-# 所有标题统一带「示例」前缀，这样截图时可以只填 8 个字符的正则 "^(?!示例)"
-# 把其它真实窗口全部排除掉，拍出来的图可以直接公开。
+# 最后一个标题**故意留空**：Electron 类应用（DeepSeek Harness、VS Code、Discord…）
+# 的主窗口常常完全不设标题。v1.1.4 之前这种窗口会被当隐形窗口跳过、永远搬不动，
+# 留一个空的摆在那里，正好证明列表里会出现「[无标题] python.exe」。
+#
+# ⚠️ 别指望用标题正则把真实窗口滤掉：`enumerate_windows` 的判断是
+#   `title and skip_title.match(title)`
+# 标题为空时**正则根本不会被求值**，所以 exclude_title 白名单拦不住无标题窗口。
+# 截图侧的过滤已改成按进程名收窄（见 _shots/make_promo.py 的 only_proc）。
 MARK = "示例"
 LAYOUT = [
     (f"{MARK} · 季度报表 - Excel", 1, 120, 90, 1000, 660),
     (f"{MARK} · 会议纪要 - 编辑器", 1, 1220, 210, 880, 600),
+    (f"{MARK} · 终端 - 构建日志", 1, 140, 860, 1000, 500),
     (f"{MARK} · 产品主页 - 浏览器", 2, 160, 110, 1120, 760),
     (f"{MARK} · Windows PowerShell", 2, 1400, 260, 880, 540),
+    ("", 2, 180, 900, 1000, 460),         # ← 故意不设标题
 ]
 # 最大化版：每屏恰好一个，最大化后各占满一块屏
 LAYOUT_MAX = [
@@ -53,7 +61,9 @@ def build(specs, maximize=False):
         win.configure(bg="#ffffff")
         # Tk 的 geometry 里 "+-2560" 表示「x 绝对定位为 -2560」，负坐标屏也能用
         win.geometry(f"{w}x{h}+{rx}+{ry}")
-        tk.Label(win, text=title, bg="#ffffff", fg="#334155",
+        win.update()
+        # 标题为空时窗口本来什么都不显示，里面补一行说明，免得截图时看着像出错了
+        tk.Label(win, text=title or "（本窗口故意不设标题）", bg="#ffffff", fg="#334155",
                  font=("Microsoft YaHei UI", 15)).pack(pady=(36, 6))
         tk.Label(win, text="（演示用窗口，标题为通用示例）", bg="#ffffff", fg="#94a3b8",
                  font=("Microsoft YaHei UI", 10)).pack()
@@ -94,7 +104,7 @@ def main():
               f"{'  主屏' if m.primary else ''}")
     print("\n将创建：")
     for title, mon_no, x, y, w, h in specs:
-        print(f"  屏{mon_no}  ({x},{y}) {w}x{h}   {title}")
+        print(f"  屏{mon_no}  ({x},{y}) {w}x{h}   {title or '(无标题)'}")
 
     if args.list:
         return 0

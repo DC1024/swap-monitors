@@ -22,12 +22,13 @@ import time
 import tkinter as tk
 from ctypes import wintypes
 from tkinter import font as tkfont
+from tkinter import messagebox
 from tkinter import ttk
 
 import swap_windows as sw
 
 APP_TITLE = "多屏窗口互换"
-APP_VER = "1.1.4"
+APP_VER = "1.1.5"
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")
@@ -1980,7 +1981,7 @@ class App:
             return None
 
     def _overflow_hint(self, tip):
-        """提示用户把图标从 ^ 里拖出来。
+        """提示用户把图标从 ^ 里拖出来。返回 True 表示**确实展示出去了**。
 
         实测结论（2026-10-11，Win11 + 自动隐藏任务栏）：
           * `IsPromoted=1` 写进 HKCU\\Control Panel\\NotifyIconSettings 后**不会立刻生效**
@@ -1990,16 +1991,24 @@ class App:
             拖一次之后由 explorer 自己记住。别再承诺「已自动置顶」了。
         """
         if self.cfg.get("_overflow_hint_acked"):
-            return
+            return False
+        # ⚠️ 顺序很关键：**先展示成功、再记账**。
+        # 反过来的话，只要展示这一步抛异常（v1.1.4 就是这么栽的：messagebox 没导入
+        # → NameError），标记已经存盘了，这条「只出现一次」的提示就被永久吞掉，
+        # 用户这辈子都看不到。宁可下次再试一遍，也不能丢。
+        try:
+            if self.hidden:
+                # 开机自启、界面收在托盘里：只能发气泡，别弹窗打扰
+                if self.hk:
+                    self.hk.notify(APP_TITLE, tip, warning=True)
+            else:
+                messagebox.showinfo(APP_TITLE, tip + "\n\n（这条提示只出现一次）",
+                                    parent=self.root)
+        except Exception:                      # noqa: BLE001
+            return False                       # 没展示成功 → 不记账，留机会重试
         self.cfg["_overflow_hint_acked"] = True
         self._save()
-        if self.hidden:
-            # 开机自启、界面收在托盘里：只能发气泡，别弹窗打扰
-            if self.hk:
-                self.hk.notify(APP_TITLE, tip, warning=True)
-        else:
-            messagebox.showinfo(APP_TITLE, tip + "\n\n（这条提示只出现一次）",
-                                parent=self.root)
+        return True
 
     def _maybe_hint_overflow(self, attempt=0):
         """图标虽然注册成功，但 Win11 默认会把它塞进 ^ 溢出区。
@@ -2026,14 +2035,17 @@ class App:
         if self.hk:
             self.hk.promote_icon()
         self.set_status("托盘图标已就绪（在 ^ 隐藏区里，拖出来一次即可固定）")
-        self._overflow_hint(
-            "托盘图标已经注册好了，但被 Win11 放进了任务栏的「^ 隐藏的图标」里，"
-            "所以你在托盘上看不到它。\n\n"
-            "解决办法（一次就够）：\n"
-            "  1. 点任务栏右下角的  ^\n"
-            "  2. 在弹出的面板里找到「多屏窗口互换」\n"
-            "  3. 把它拖到任务栏上（或右键选「固定到任务栏」）\n\n"
-            "之后它就会一直显示在那里；热键不受影响，随时可用。")
+        # 只有**真的展示出去**了才算提示过。失败（比如弹窗那步抛异常）就留着机会，
+        # 等下一次 tray_ok（explorer 重启重挂图标时还会再来一次）再试。
+        if self._overflow_hint(
+                "托盘图标已经注册好了，但被 Win11 放进了任务栏的「^ 隐藏的图标」里，"
+                "所以你在托盘上看不到它。\n\n"
+                "解决办法（一次就够）：\n"
+                "  1. 点任务栏右下角的  ^\n"
+                "  2. 在弹出的面板里找到「多屏窗口互换」\n"
+                "  3. 把它拖到任务栏上（或右键选「固定到任务栏」）\n\n"
+                "之后它就会一直显示在那里；热键不受影响，随时可用。"):
+            self._overflow_hinted = True
 
     # ---------- 事件循环 ----------
     def _poll(self):
