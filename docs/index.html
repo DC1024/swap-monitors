@@ -160,6 +160,36 @@
   @media(prefers-reduced-motion:reduce){.wA,.wB{animation:none}}
   .arrowp{animation:fl 7s steps(1) infinite}
   @keyframes fl{0%,26%{opacity:1}46%,100%{opacity:.25}}
+
+  /* ---------- video ---------- */
+  .video-shell{max-width:940px;margin:0 auto}
+  .video-wrap{position:relative;aspect-ratio:16/9;border-radius:16px;overflow:hidden;
+              background:#05080e;border:1px solid var(--line);box-shadow:var(--shadow-lg)}
+  .video-wrap > img,.video-wrap > iframe{position:absolute;inset:0;width:100%;height:100%;
+              border:0;display:block}
+  .video-wrap > img{object-fit:cover}
+  .video-play{position:absolute;inset:0;width:100%;height:100%;border:0;padding:0;
+              background:rgba(4,7,12,0);cursor:pointer;display:grid;place-items:center;
+              transition:background .2s}
+  .video-play:hover{background:rgba(4,7,12,.18)}
+  .play-ring{width:84px;height:84px;border-radius:50%;display:grid;place-items:center;
+             background:color-mix(in srgb,var(--accent) 80%,transparent);
+             border:1.5px solid rgba(255,255,255,.62);box-shadow:0 12px 34px rgba(0,0,0,.45);
+             transition:transform .18s,background .18s}
+  .video-play:hover .play-ring{transform:scale(1.07);background:var(--accent)}
+  .play-ring svg{width:30px;height:30px;fill:#fff;margin-left:3px}
+  .play-hint{position:absolute;left:0;right:0;bottom:24px;text-align:center;
+             color:rgba(255,255,255,.92);font-size:13.5px;font-weight:600;letter-spacing:.4px;
+             text-shadow:0 2px 12px rgba(0,0,0,.7)}
+  @media(prefers-reduced-motion:reduce){.play-ring{transition:none}}
+  @media(max-width:560px){
+    /* 小屏上播放键要收，否则会压住封面标题 */
+    .play-ring{width:62px;height:62px}
+    .play-ring svg{width:23px;height:23px}
+    .play-hint{bottom:14px;font-size:12px}
+    .video-shell .shot-cap{font-size:12.8px}
+  }
+  .video-shell .shot-cap a{white-space:nowrap}
 </style>
 </head>
 <body>
@@ -169,6 +199,7 @@
     <img class="nav-logo" src="assets/icon.png" alt="">
     <span class="nav-name">多屏窗口互换</span>
     <span class="nav-sp"></span>
+    <a class="nav-link" href="#video">视频</a>
     <a class="nav-link" href="#why">为什么</a>
     <a class="nav-link" href="#feat">特性</a>
     <a class="nav-link" href="#how">原理</a>
@@ -249,6 +280,34 @@
     </svg>
   </div>
 </header>
+
+<hr>
+
+<!-- ================= VIDEO ================= -->
+<section id="video">
+  <div class="wrap">
+    <h2 class="sec-h">60 秒，看完再决定装不装</h2>
+    <p class="sec-p">从拖一个窗口两秒、拖十个两分钟，到一次按键全部归位。</p>
+
+    <div class="video-shell">
+      <div class="video-wrap" id="videoWrap">
+        <img src="assets/video-poster.jpg" width="1600" height="900"
+             alt="Swap Monitors 宣传片封面：别拖了，按一下。">
+        <button class="video-play" id="videoPlay" type="button" aria-label="播放宣传片，60 秒">
+          <span class="play-ring">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+          </span>
+          <span class="play-hint">播放 · 60 秒</span>
+        </button>
+      </div>
+      <p class="shot-cap">
+        播放器来自 B 站，点击后才会加载。
+        也可以<a href="https://www.bilibili.com/video/BV1t7Jo6dEMm" target="_blank"
+                rel="noopener" style="color:var(--accent)">在 B 站打开</a>。
+      </p>
+    </div>
+  </div>
+</section>
 
 <hr>
 
@@ -641,5 +700,25 @@ python tests/verify_gui.py
   </div>
 </footer>
 
+
+<script>
+/* 封面门面：点击后才注入 B 站播放器，首屏不请求第三方资源 */
+(function(){
+  var wrap = document.getElementById('videoWrap');
+  var btn  = document.getElementById('videoPlay');
+  if(!wrap || !btn) return;
+  btn.addEventListener('click', function(){
+    var f = document.createElement('iframe');
+    f.src = 'https://player.bilibili.com/player.html?bvid=BV1t7Jo6dEMm&page=1&high_quality=1&danmaku=1&autoplay=1';
+    f.title = 'Swap Monitors 宣传片';
+    f.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture');
+    f.setAttribute('allowfullscreen', '');
+    f.setAttribute('scrolling', 'no');
+    f.setAttribute('frameborder', '0');
+    wrap.innerHTML = '';
+    wrap.appendChild(f);
+  }, {once:true});
+})();
+</script>
 </body>
 </html>
