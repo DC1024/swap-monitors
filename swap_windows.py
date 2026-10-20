@@ -23,8 +23,10 @@ swap_windows.py —— 一键互换两块显示器上的全部窗口，保持贴
 import argparse
 import ctypes
 import json
+import os
 import re
 import sys
+import time
 from ctypes import wintypes
 
 # ---------------------------------------------------------------- Win32 基础
@@ -165,6 +167,32 @@ def _err(msg=None):
     return ctypes.get_last_error(), msg
 
 
+# ---------------------------------------------------------------- 日志
+#
+# 为什么要有这个文件：程序里到处是 `except Exception: pass`，而打包成
+# --windowed 的 exe 连 stderr 都没有 —— 一旦出问题是**完全没有线索**的。
+# 尤其是 EnumWindows 的 ctypes 回调（异常无法向外传播，只能静默丢窗口）。
+# 所以宁可在这里记一行，也不要让用户拿着「有些窗口不跟着走」来猜。
+LOG_PATH = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"),
+                        "SwapMonitors", "error.log")
+LOG_MAX = 200_000          # 超过就截断，别让它无限长
+
+
+def log_error(msg):
+    """写一行日志。写不进去也不许把程序带崩（这是兜底，不是主流程）。"""
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        try:
+            if os.path.getsize(LOG_PATH) > LOG_MAX:
+                open(LOG_PATH, "w", encoding="utf-8").close()
+        except OSError:
+            pass
+        with open(LOG_PATH, "a", encoding="utf-8", errors="replace") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n")
+    except Exception:                            # noqa: BLE001
+        pass
+
+
 def is_cloaked(hwnd):
     """被 DWM 隐藏的窗口（含"其他虚拟桌面"上的窗口）。"""
     if dwmapi is None:
@@ -260,7 +288,7 @@ def enumerate_windows(monitors, skip_title, only_title=None, only_proc=None,
     me = kernel32.GetCurrentProcessId()
     CB = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
-    def cb(hwnd, lparam):
+    def _cb(hwnd, lparam):
         if not user32.IsWindowVisible(hwnd):
             return True
         n = user32.GetWindowTextLengthW(hwnd)
@@ -334,6 +362,22 @@ def enumerate_windows(monitors, skip_title, only_title=None, only_proc=None,
 
         wins.append(Win(hwnd, title, cls, pid.value, pname, r, idx, wp))
         return True
+
+    def cb(hwnd, lparam):
+        """ctypes 回调外壳：里面**任何**异常都不能让它跑出去。
+
+        原因：ctypes 回调抛出的异常无法向上传播，Python 只能在 stderr 打一行
+        然后继续；而打包成 `--windowed` 的 exe 根本没有 stderr。于是「某个窗口
+        的属性读不出来」这种小问题会表现成「枚举静默地少掉一部分窗口」——
+        用户看到的是「有些窗口不跟着走」，我们却连一行线索都拿不到。
+        所以：记下来，然后**照常返回 True 继续枚举**，绝不截断整份列表。
+        """
+        try:
+            return _cb(hwnd, lparam)
+        except Exception as e:                  # noqa: BLE001
+            log_error(f"枚举窗口 0x{hwnd if isinstance(hwnd, int) else 0:X} 时出错："
+                      f"{type(e).__name__}: {e}")
+            return True
 
     user32.EnumWindows(CB(cb), 0)
     return wins
@@ -534,11 +578,27 @@ def swap(args):
     except ValueError as e:
         return bad(str(e))
 
-    skip = DEFAULT_SKIP_TITLE
-    if args.exclude_title:
-        skip = re.compile(f"({DEFAULT_SKIP_TITLE.pattern})|({args.exclude_title})", re.I)
-    only_title = re.compile(args.only_title, re.I) if args.only_title else None
-    only_proc = re.compile(args.only_proc, re.I) if args.only_proc else None
+    # 用户给的正则：编译失败必须给一句人话。
+    # 直接 re.compile 的话，一个 `(` 就会抛未捕获的 re.error 把程序崩掉 ——
+    # 而其他参数写错都有干干净净的提示，这里不该是例外。
+    def user_re(pat, what):
+        try:
+            return re.compile(pat, re.I)
+        except re.error as e:
+            raise ValueError(f"{what} 的正则写错了：{e}（收到的是 {pat!r}）")
+
+    try:
+        skip = DEFAULT_SKIP_TITLE
+        if args.exclude_title:
+            skip = re.compile(
+                f"({DEFAULT_SKIP_TITLE.pattern})|"
+                f"({user_re(args.exclude_title, '--exclude-title').pattern})", re.I)
+        only_title = (user_re(args.only_title, "--only-title")
+                      if args.only_title else None)
+        only_proc = (user_re(args.only_proc, "--only-proc")
+                     if args.only_proc else None)
+    except ValueError as e:
+        return bad(str(e))
     excl_pids = {int(x) for x in re.split(r"[,\s]+", args.exclude_pid or "") if x.strip().isdigit()}
 
     wins = enumerate_windows(monitors, skip, only_title, only_proc,

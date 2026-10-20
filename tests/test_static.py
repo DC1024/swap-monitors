@@ -153,7 +153,9 @@ check(f"源码里用到的 {len(_calls)} 个 messagebox 方法都存在",
 check("四个常用方法齐全（showinfo / showwarning / askyesno / showerror）",
       all(hasattr(G.messagebox, m) for m in
           ("showinfo", "showwarning", "askyesno", "showerror")))
-check("调用点数量是预期的 10 处（多一处少一处都该回来看看）", _count == 10,
+# v1.1.7 起是 11 处：新增了「排除标题的正则写错了」这条警告。
+# 这个数字是**故意写死**的：多一处少一处都该回来看看是不是漏了 import。
+check("调用点数量是预期的 11 处（多一处少一处都该回来看看）", _count == 11,
       f"实际 {_count} 处")
 
 # ============================================================
@@ -262,7 +264,8 @@ check("APP_VER 形如 x.y.z", bool(re.fullmatch(r"\d+\.\d+\.\d+", G.APP_VER)),
       G.APP_VER)
 _md_path = os.path.join(ROOT, "README.md")
 _md = open(_md_path, encoding="utf-8").read() if os.path.exists(_md_path) else ""
-for _t in ("test_admin_mode.py", "test_static.py", "test_elevate.py"):
+for _t in ("test_admin_mode.py", "test_static.py", "test_elevate.py",
+           "test_hardening.py"):
     check(f"README 的测试清单里列出了 {_t}", _t in _md)
 
 print()

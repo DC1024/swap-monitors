@@ -24,11 +24,12 @@ from ctypes import wintypes
 from tkinter import font as tkfont
 from tkinter import messagebox
 from tkinter import ttk
+from xml.sax import saxutils
 
 import swap_windows as sw
 
 APP_TITLE = "多屏窗口互换"
-APP_VER = "1.1.6"
+APP_VER = "1.1.7"
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")
@@ -98,6 +99,9 @@ MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 1, 2, 4, 8, 0x4000
 WM_HOTKEY, WM_DESTROY = 0x0312, 0x0002
 VK_F1 = 0x70
 HWND_MESSAGE = -3
+# 允许当主键的字符。刻意**不**用 str.isalnum() 判：它对 '中'、'あ' 也返回真，
+# 而 ord() 出来是 20013 这种 RegisterHotKey 根本不认的虚键码。
+MAIN_KEYS = frozenset("0123456789abcdefghijklmnopqrstuvwxyz")
 
 MB_ICONINFORMATION, MB_ICONWARNING, MB_TOPMOST = 0x40, 0x30, 0x40000
 
@@ -363,9 +367,20 @@ class Toggle(tk.Frame):
 
 
 def parse_hotkey(spec):
-    """'ctrl+alt+s' / 'ctrl+shift+f9' → (mods, vk, 显示名)"""
-    import re
+    """'ctrl+alt+s' / 'ctrl+shift+f9' → (mods, vk, 显示名)
+
+    两条硬性约束（v1.1.7 补，之前一条都没拦）：
+
+      * **必须带 Ctrl / Alt / Win 之一。** 否则用户可以设一个裸 `s`，
+        注册成全局热键之后**整个系统里打字就废了** —— 这不是「不好用」，是事故。
+        Shift 单独不算数：`shift+字母` 同样干扰正常输入，而且无数程序
+        的快捷键本身就长这样，几乎必撞。
+      * 主键只认 `[a-z0-9]` 和 F1–F24。原先写的是 `part.isalnum()`，
+        而 Python 里 `'中'.isalnum()` 为真 → `ord('中') = 20013` 传进
+        RegisterHotKey 必然失败，界面却报「已被其他程序占用」，纯误导。
+    """
     mods, vk, names = 0, None, []
+    unknown = []
     for part in re.split(r"[+\-\s]+", (spec or "").strip().lower()):
         if not part:
             continue
@@ -384,11 +399,19 @@ def parse_hotkey(spec):
         elif re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", part):
             vk = VK_F1 + int(part[1:]) - 1
             names.append(part.upper())
-        elif len(part) == 1 and part.isalnum():
+        elif len(part) == 1 and part in MAIN_KEYS:
             vk = ord(part.upper())
             names.append(part.upper())
+        else:
+            unknown.append(part)
+    if unknown:
+        raise ValueError(f"认不出这部分：{'、'.join(unknown)}"
+                         f"（主键只能是字母、数字或 F1–F24）")
     if vk is None:
         raise ValueError("热键里至少要有一个主键，例如 ctrl+alt+s")
+    if not mods & (MOD_CONTROL | MOD_ALT | MOD_WIN):
+        raise ValueError("必须带上 Ctrl / Alt / Win 之一："
+                         "只按一个字母会把正常输入全抢走")
     return mods, vk, "+".join(names)
 
 
@@ -864,6 +887,11 @@ def _clear_show_flag():
 TASK_NAME = "SwapMonitors-Elevated"
 
 
+def _esc(s):
+    """插进任务 XML 文本之前必须过一遍（见 _task_xml 的说明）。"""
+    return saxutils.escape(s or "")
+
+
 def _task_exe():
     """计划任务要拉起的 exe。frozen 是自己；源码方式用 pythonw。"""
     return _autostart_exe()
@@ -875,16 +903,23 @@ def _task_xml():
     - LogonTrigger：登录即启动，等价于开机自启（且免 UAC）
     - RunLevel=HighestAvailable：以最高权限运行，这就是「记住管理员模式」
     - 抓当前用户的 SID 作 Principal，任务才允许在该用户会话里跑 GUI
+
+    ⚠️ 凡是插进 XML 文本的值都必须转义（v1.1.7）：exe 路径是完全由用户
+    决定的，装在 `C:\\Tools\\R&D\\` 这类目录里时，裸 `&` 会让 XML 直接失效，
+    表现出来是「任务建不出来」而报错信息完全指不到真正原因。
+    用 `xml.sax.saxutils.escape` 而不是手写替换 —— 它同时处理 & < >，
+    并且不会二次转义已经合法的实体。
     """
-    exe = _task_exe()
-    sid = _current_user_sid()
+    exe = _esc(_task_exe())
+    sid = _esc(_current_user_sid())
+    uri = _esc(TASK_NAME)
     # 用 --minimized 让自启时静默进托盘；任务触发器不会带上这个参数，
     # 所以写进 Arguments。
     xml = f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>多屏窗口互换：以管理员权限启动，避免每次弹 UAC。</Description>
-    <URI>\\{TASK_NAME}</URI>
+    <URI>\\{uri}</URI>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -1363,8 +1398,10 @@ class App:
         ttk.Label(ex, text="排除的窗口标题（正则，可留空）",
                   style="Sect.TLabel").pack(anchor="w")
         self.ex_var = tk.StringVar(value=self.cfg["exclude_title"])
-        ttk.Entry(ex, textvariable=self.ex_var, font=(FONT, 9)).pack(
-            fill="x", pady=(6, 0), ipady=3)
+        self.ex_entry = ttk.Entry(ex, textvariable=self.ex_var, font=(FONT, 9))
+        self.ex_entry.pack(fill="x", pady=(6, 0), ipady=3)
+        # 光标一离开就校验：正则写错必须当场说出来，不能等到下次互换才静默失效
+        self.ex_entry.bind("<FocusOut>", lambda _e: self._check_exclude_re())
 
         opts = ttk.Frame(left)
         opts.pack(fill="x", pady=(12, 0))
@@ -2116,10 +2153,39 @@ class App:
     def set_status(self, text):
         self.status.configure(text=text)
 
+    def _check_exclude_re(self, pat=None):
+        """「排除的窗口标题」这段正则当场校验。
+
+        不校验的后果：写错一个括号，程序里 `re.compile` 直接抛 re.error。
+        而打包成 --windowed 的 exe 连 stderr 都没有 —— 用户看到的只是
+        「窗口列表是空的」或者「排除没生效」，完全指不到真正原因。
+        """
+        if pat is None:
+            pat = self.ex_var.get().strip()
+        if not pat:
+            return True
+        try:
+            re.compile(pat, re.I)
+        except re.error as e:
+            msg = (f"「排除的窗口标题」这段正则写错了：\n\n{e}\n\n"
+                   f"收到的是：{pat}\n\n"
+                   f"已经保留上一次能用的值，改对之后才会生效。")
+            self.set_status(f"排除标题的正则写错了：{e}")
+            try:
+                messagebox.showwarning(APP_TITLE, msg, parent=self.root)
+            except Exception:                    # noqa: BLE001
+                pass
+            return False
+        return True
+
     def _save(self, *_):
+        bad_re = not self._check_exclude_re()
         self.cfg.update({
             "hotkey": self.hk_var.get().strip(),
-            "exclude_title": self.ex_var.get().strip(),
+            # 正则写错时保留上一个能用的值：坏值一旦落盘，下次启动
+            # 每次互换都会失败，而界面上根本看不出为什么
+            "exclude_title": (self.cfg.get("exclude_title", "")
+                              if bad_re else self.ex_var.get().strip()),
             "skip_minimized": bool(self.skipmin_var.get()),
             "scale": bool(self.scale_var.get()),
             "restore_focus": bool(self.focus_var.get()),
@@ -2128,6 +2194,8 @@ class App:
             "permute": {str(k): v for k, v in sorted(self.perm.items())},
             "run_as_admin": bool(self.admin_var.get()),
         })
+        if bad_re:
+            self.ex_var.set(self.cfg["exclude_title"])
         # 只落已知的键 —— 顺便把老版本留下的 start_minimized 之类陈旧配置清掉，
         # 否则它会一直躺在那儿让人误以为是有效的设置
         save_cfg({k: self.cfg[k] for k in DEFAULT_CFG if k in self.cfg})
