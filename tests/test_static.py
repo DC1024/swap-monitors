@@ -226,7 +226,38 @@ for name in FILES:
         check(f"{name} 能编译通过", False, f"{e}")
 
 # ============================================================
-section("⑥ 版本号与文档自洽")
+section("⑥ 默认跳过名单不误伤正常窗口（任务管理器曾是受害者）")
+import swap_windows as SW                               # noqa: E402
+
+# v1.0 首版把 `Task Manager|任务管理器` 写进了 DEFAULT_SKIP_TITLE，
+# 于是用户开着的任务管理器永远不跟着屏走 —— 而它只是个普通窗口。
+for _t in ("任务管理器", "Task Manager", "task manager", "TASK MANAGER"):
+    check(f"默认跳过名单不再匹配 {_t!r}",
+          not SW.DEFAULT_SKIP_TITLE.match(_t), SW.DEFAULT_SKIP_TITLE.pattern)
+for _t in ("Program Manager", "DWM", "Windows 输入体验",
+           "Windows Input Experience", "Windows Shell Experience Host",
+           "Microsoft Text Input Application"):
+    check(f"该跳过的 {_t!r} 仍然在名单里",
+          bool(SW.DEFAULT_SKIP_TITLE.match(_t)), SW.DEFAULT_SKIP_TITLE.pattern)
+
+_src_sw = open(os.path.join(ROOT, "swap_windows.py"), encoding="utf-8").read()
+check("源码里确实没有把任务管理器列进跳过正则",
+      "Task Manager|任务管理器" not in _src_sw)
+
+# 反向验证：真把任务管理器塞回去，上面的断言必须失败（不然就是假绿）
+check("反向验证：塞回黑名单后正则会匹配「任务管理器」",
+      bool(re.compile(r"^(DWM|Task Manager|任务管理器)$", re.I).match("任务管理器")))
+
+# err=5 是 UIPI 的唯一铁证。旧的「读不到进程名 = 管理员进程」判据靠不住：
+# 本程序与对方同为管理员时进程名读得到，窗口照样可能被拒绝。
+_mv = _src_sw[_src_sw.index("def move_window"):_src_sw.index("def swap(args)")]
+check("move_window 读取 SetWindowPos 的 GetLastError", "get_last_error()" in _mv)
+check("err=5 时明确报「拒绝访问」并指向管理员模式",
+      "err == 5" in _mv and "拒绝访问" in _mv and "管理员模式" in _mv)
+check("失败不再一律归因于「可能权限不足」", "可能权限不足" not in _mv)
+
+# ============================================================
+section("⑦ 版本号与文档自洽")
 check("APP_VER 形如 x.y.z", bool(re.fullmatch(r"\d+\.\d+\.\d+", G.APP_VER)),
       G.APP_VER)
 _md_path = os.path.join(ROOT, "README.md")

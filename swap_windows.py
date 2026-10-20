@@ -15,7 +15,9 @@ swap_windows.py —— 一键互换两块显示器上的全部窗口，保持贴
     python swap_windows.py --scale           # 强制等比缩放（默认：等尺寸自动平移）
 
 依赖：无。仅 Python 标准库 + Win32 API（ctypes）。
-注意：管理员权限运行的窗口（任务管理器、部分杀软等）需要以管理员身份运行本脚本才能搬动。
+注意：任务管理器、部分杀软等窗口默认就跑在「高完整性级别」（管理员权限），
+      本程序必须同样以管理员身份运行才搬得动它们（Windows 的 UIPI 限制）。
+      v1.1.6 起任务管理器已从默认跳过名单里移除 —— 它只是个普通窗口。
 """
 
 import argparse
@@ -144,10 +146,16 @@ SWP_NOZORDER, SWP_NOACTIVATE, SWP_NOOWNERZORDER = 0x0004, 0x0010, 0x0200
 DWMWA_CLOAKED = 14
 
 # shell / 输入法 / 覆盖层之类的伪窗口，默认不参与交换
+# 不该被搬的窗口：桌面壳层、输入体验宿主、DWM。
+#
+# ⚠️ **任务管理器（Task Manager / 任务管理器）不能在这里**。
+# v1.0 首版就把它写进了黑名单，后果是用户开着的任务管理器永远不跟着屏走，
+# 而它只是一个再普通不过的窗口：手动拖得动、Win+Shift+←/→ 也搬得动，
+# 既不是壳层也不是 DWM。2026-10-20 移除。
 DEFAULT_SKIP_TITLE = re.compile(
     r"^(Program Manager|Windows 输入体验|Windows Input Experience|"
     r"Microsoft Text Input Application|Windows Shell Experience Host|"
-    r"DWM|Task Manager|任务管理器)$", re.I)
+    r"DWM)$", re.I)
 SKIP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd",
                 "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow",
                 "MultitaskingViewFrame", "ForegroundStaging"}
@@ -457,14 +465,25 @@ def move_window(win, target, dst, verbose=True):
 
     before = RECT()
     user32.GetWindowRect(hwnd, ctypes.byref(before))
+    ctypes.set_last_error(0)
     ok = bool(user32.SetWindowPos(hwnd, None, target.left, target.top,
                                  target.width, target.height, flags))
+    err = ctypes.get_last_error()
     after = RECT()
     user32.GetWindowRect(hwnd, ctypes.byref(after))
-    if ok and (after.left, after.top) == (before.left, before.top) \
+    if not ok:
+        # UIPI：低完整性进程不能动高完整性进程的窗口，系统一律返回
+        # ERROR_ACCESS_DENIED(5)。这是唯一能确诊「权限不够」的信号 ——
+        # 别再拿「读不到进程名」当判据，同样权限时进程名照样读得到，
+        # 但窗口仍然可能被拒绝（比如对方的窗口被保护）。
+        if err == 5:
+            return False, ("拒绝访问（err=5）：对方进程权限更高，"
+                           "勾选「记住管理员模式」后重试")
+        return False, f"SetWindowPos 失败 err={err}"
+    if (after.left, after.top) == (before.left, before.top) \
             and (before.left, before.top) != (target.left, target.top):
-        return False, "位置未发生变化（可能权限不足）"
-    return ok, ""
+        return False, "位置未发生变化（窗口自己拒绝了这次移动）"
+    return True, ""
 
 
 def swap(args):
@@ -644,10 +663,11 @@ def swap(args):
             warn += 1
             msg = f"{w.label[:40]!r} {note}"
             payload["errors"].append(msg)
-            if w.proc is None:          # 读不到进程名 = 对方是管理员权限进程
+            # err=5 是权限不足的铁证；「读不到进程名」只能作为兜底线索 ——
+            # 本程序与对方同为管理员时进程名读得到，窗口仍可能被拒绝。
+            if "拒绝访问" in note or w.proc is None:
                 denied += 1
-            say(f"  ! 失败: {msg}"
-                f"{'（管理员进程？试试用管理员身份运行）' if w.proc is None else ''}")
+            say(f"  ! 失败: {msg}")
         else:
             ok_n += 1
             say(f"  ✓ {w.label[:40]!r} → {target!s} {note}") if args.verbose else None
