@@ -1368,6 +1368,8 @@ class App:
         st.configure("Title.TLabel", background=C_BG, foreground=C_TEXT,
                      font=(FONT, 15, "bold"))
         st.configure("Sub.TLabel", background=C_BG, foreground=C_DIM, font=(FONT, 9))
+        # 排列提醒条用：正文色太不显眼，纯红又像报错，取个琥珀色
+        st.configure("Warn.TLabel", background=C_BG, foreground=C_WARN, font=(FONT, 9))
         st.configure("Sect.TLabel", background=C_BG, foreground=C_DIM,
                      font=(FONT, 9, "bold"))
         st.configure("Accent.TButton", font=(FONT, 11, "bold"), padding=(22, 10),
@@ -1421,6 +1423,14 @@ class App:
             ttk.Button(pre, text=text, width=9, command=fn).pack(side="left", padx=(8, 0))
         self.perm_hint = ttk.Label(pre, text="", style="Sub.TLabel")
         self.perm_hint.pack(side="right")
+
+        # 排列提醒条。放**常驻的一行**而不是状态栏：改完排列 60ms 后 refresh() 会把
+        # 状态栏刷成"已刷新"，提示只会闪一下，等于没说。空文本时把 label 摘掉，
+        # 外层 frame 没有子控件就自然塌成 0 高度，不白占版面。
+        self.perm_warn_box = ttk.Frame(self.root)
+        self.perm_warn_box.pack(fill="x", padx=18)
+        self.perm_warn = ttk.Label(self.perm_warn_box, text="", style="Warn.TLabel")
+        self._warn_shown = False
 
         # 中部：窗口清单
         mid = ttk.Frame(self.root)
@@ -1862,6 +1872,35 @@ class App:
             return False
         return all(self.perm.get(d) == s for s, d in self.perm.items())
 
+    def _stack_hint(self, perm):
+        """找出「会被叠窗口」的目标屏，返回一句提醒；没有就返回空串。
+
+        perm 是 {源屏: 目标屏}。{1: 2} 这种**部分排列**是合法的：屏1 的窗口搬到
+        屏2，而屏2 自己没有去向、它的窗口留在原地 —— 两边就叠在一起了。对一个
+        卖点是"布局不乱"的工具，这是语义陷阱，但改语义（自动补成对换）会让
+        "只搬一块屏"这种正当需求没法表达，所以只提示、不动 perm。
+        """
+        n = len(self.mons)
+        stuck = sorted({d for d in perm.values()
+                        if isinstance(d, int) and 1 <= d <= n and d not in perm})
+        if not stuck:
+            return ""
+        who = "、".join(f"屏{d}" for d in stuck)
+        return (f"⚠ {who} 没有设置去向：它原有的窗口会留在原地，"
+                f"与搬过来的窗口叠在一起")
+
+    def _set_stack_hint(self, text):
+        """显示/收起提醒条。用标志位而不是 winfo_ismapped()：窗口还没 map 时
+        （启动中、测试里 withdraw 过）ismapped 恒为 0，会反复 pack。"""
+        if text:
+            self.perm_warn.configure(text=text)
+            if not self._warn_shown:
+                self.perm_warn.pack(anchor="w")
+                self._warn_shown = True
+        elif self._warn_shown:
+            self.perm_warn.pack_forget()
+            self._warn_shown = False
+
     def _ensure_perm(self):
         if self._perm_n == len(self.mons):
             return
@@ -1933,6 +1972,7 @@ class App:
         self.perm_hint.configure(
             text="全部不动：按热键不会有任何窗口被移动" if not self.perm
             else "、".join(f"屏{s}→屏{d}" for s, d in sorted(self.perm.items())))
+        self._set_stack_hint(self._stack_hint(self.perm))
         # 「恢复原状」只在对换时成立；轮转要说「再转一次」
         self.redo_btn.configure(
             text="恢复原状（再换一次）" if self._is_involution() else "再轮转一次")
@@ -1959,6 +1999,7 @@ class App:
                 continue
             final[s] = d
         self.perm = final
+        self._set_stack_hint(self._stack_hint(final))   # 立刻反映，不等 60ms 后的重建
         self.cfg["permute"] = {str(k): v for k, v in sorted(final.items())}
         self._save()
         if note:
