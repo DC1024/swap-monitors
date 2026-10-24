@@ -667,22 +667,50 @@ class TrayThread(threading.Thread):
         u32.DestroyWindow(self.hwnd)
 
     def _apply(self, spec):
+        # 先记住现在生效的那个：新的注册不上时必须把它装回去。否则用户会从
+        # 「有个能用的热键」变成「一个都没有」—— 因为上面这行 Unregister 已经
+        # 把老热键真放掉了，比不改还糟。
+        old_spec, old_shown = self._spec, self._shown_hk
         u32.UnregisterHotKey(self.hwnd, 1)
         try:
             mods, vk, shown = parse_hotkey(spec)
         except ValueError as e:
-            self.results.put(("hk_fail", str(e)))
+            back = self._restore_hotkey(old_spec, old_shown)
+            self.results.put(("hk_fail", str(e) + (f"（原来的 {back} 仍在生效）" if back else "")))
             return
         if u32.RegisterHotKey(self.hwnd, 1, mods | MOD_NOREPEAT, vk):
             self._spec = spec
             self._shown_hk = shown
             self._refresh_tip()
-            self.results.put(("hk_ok", shown))
+            self.results.put(("hk_ok", (shown, spec)))
         else:
-            self._shown_hk = ""
+            err = ctypes.get_last_error()
+            back = self._restore_hotkey(old_spec, old_shown)
+            self.results.put(("hk_fail", f"{shown} 已被其他程序占用（Win32 错误 {err}），"
+                                        f"换一个组合试试"
+                                        + (f"；原来的 {back} 仍在生效" if back
+                                           else "；当前没有热键可用")))
+
+    def _restore_hotkey(self, spec, shown):
+        """把之前那个热键重新注册回去；返回实际生效的显示名（没有就是空串）。"""
+        if not spec:
+            self._spec, self._shown_hk = None, ""
             self._refresh_tip()
-            self.results.put(("hk_fail", f"{shown} 已被其他程序占用（Win32 错误 "
-                                        f"{ctypes.get_last_error()}），换一个组合试试"))
+            return ""
+        try:
+            mods, vk, parsed = parse_hotkey(spec)
+        except ValueError:
+            self._spec, self._shown_hk = None, ""
+            self._refresh_tip()
+            return ""
+        if u32.RegisterHotKey(self.hwnd, 1, mods | MOD_NOREPEAT, vk):
+            self._spec = spec
+            self._shown_hk = shown or parsed
+            self._refresh_tip()
+            return self._shown_hk
+        self._spec, self._shown_hk = None, ""
+        self._refresh_tip()
+        return ""
 
 
 # ============================================================ 主界面
@@ -1515,8 +1543,9 @@ class App:
         except ValueError as e:
             self.hk_state.configure(text=f"✗ {e}", foreground=C_WARN)
             return
-        self.cfg["hotkey"] = spec
-        self._save()
+        # 这里**不写配置**：要等托盘线程真的注册成功（hk_ok）再落盘。
+        # 以前是先 cfg["hotkey"]=spec + _save() 再注册，注册失败时配置里
+        # 记的就是那个根本用不了的组合 —— 下次启动照样失败，用户还找不到原因。
         if self.hk is None:
             self.start_hotkey()
         else:
@@ -2132,9 +2161,13 @@ class App:
                     self.set_status(f"热键触发第 {self.hk_count} 次，正在互换…")
                     self.do_swap()
                 elif ev == "hk_ok":
-                    self.hk_shown = val
+                    # 只有这里才把热键写进配置：注册成功 = 这个组合真的能用。
+                    self.hk_shown, _spec = val
+                    if self.cfg.get("hotkey") != _spec:
+                        self.cfg["hotkey"] = _spec
+                        self._save()
                     self._hk_label(ok=True)
-                    self.set_status(f"热键 {val} 已生效，随时按下即可互换；点 X 会收进托盘")
+                    self.set_status(f"热键 {self.hk_shown} 已生效，随时按下即可互换；点 X 会收进托盘")
                 elif ev == "tray_ok":
                     self.tray_ok = bool(val)
                     self._hk_label(ok=True)
@@ -2206,7 +2239,9 @@ class App:
         # 用户只会看到输入被莫名吞掉。校验只放在 <FocusOut>（见 _check_exclude_re）。
         pat = self.ex_var.get().strip()
         self.cfg.update({
-            "hotkey": self.hk_var.get().strip(),
+            # hotkey 故意不在这里写：只有「真的注册成功」时才落盘（见 _poll 的
+            # hk_ok 分支）。否则用户敲了个用不了的组合，随便点一下开关就把坏值
+            # 存进配置了，下次启动又失败一次。
             # 正则写错时保留上一个能用的值：坏值一旦落盘，下次启动
             # 每次互换都会失败，而界面上根本看不出为什么
             "exclude_title": pat if _re_ok(pat) else self.cfg.get("exclude_title", ""),
