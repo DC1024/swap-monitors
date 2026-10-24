@@ -44,8 +44,16 @@ def check(name, cond, detail=""):
 
 
 def write_cmd(text):
-    with open(G.AUTOSTART_CMD, "w", encoding="mbcs", newline="") as f:
-        f.write(text)
+    """写盘走程序内部同一条路（_write_ascii_file：全 ASCII 用 ascii，否则 mbcs）。
+
+    英文系统的 mbcs 是 cp1252，编不了中文。下面的 (d) 用例只想造一份「读不出
+    路径的垃圾内容」，不需要真中文；编不了就退化成 ASCII 占位，否则整个脚本
+    在英文 CI 上会因为写文件就崩掉，一行断言都跑不到。
+    """
+    try:
+        G._write_ascii_file(G.AUTOSTART_CMD, text)
+    except UnicodeEncodeError:
+        G._write_ascii_file(G.AUTOSTART_CMD, text.encode("ascii", "replace").decode("ascii"))
 
 
 print("== 1) 生成的 .cmd 内容 ==")

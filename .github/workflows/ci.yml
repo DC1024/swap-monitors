@@ -50,19 +50,30 @@ jobs:
         run: python -m compileall -q swap_gui.py swap_windows.py make_icon.py tests
 
       # ---- 纯逻辑：不创建窗口、不移动窗口，任何机器都能跑 ----
+      # 每个脚本单独跑、单独报，不能用 && 串：串起来第一个挂了后面的根本不跑，
+      # 只能一轮一轮挤牙膏（实测连吃两次红，才把两个问题都看出来）。
       - name: 纯逻辑测试
+        shell: bash
         run: |
-          python tests/test_map.py
-          python tests/test_static.py
-          python tests/test_elevate.py
-          python tests/test_autostart.py
-          python tests/test_hardening.py
+          fail=0
+          for t in test_map test_static test_elevate test_autostart test_hardening; do
+            echo "::group::$t"
+            python "tests/$t.py" || { echo "::error title=$t::tests/$t.py 有断言失败"; fail=1; }
+            echo "::endgroup::"
+          done
+          exit $fail
 
       # ---- 需要 Tk：会建主窗口并枚举一次窗口，但不动任何真实窗口 ----
       - name: GUI 相关测试
+        shell: bash
         run: |
-          python tests/test_arrange.py
-          python tests/test_admin_mode.py
+          fail=0
+          for t in test_arrange test_admin_mode; do
+            echo "::group::$t"
+            python "tests/$t.py" || { echo "::error title=$t::tests/$t.py 有断言失败"; fail=1; }
+            echo "::endgroup::"
+          done
+          exit $fail
 
       # ---- 冒烟：CLI 真跑一次（单屏也能跑 --list） ----
       - name: CLI 冒烟

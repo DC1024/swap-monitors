@@ -99,10 +99,17 @@ print("== 5) is_elevated 的伪句柄签名回归（v1.1.2 修的坑） ==")
 # c_void_p 变成 2**64-1，ctypes 默认按 c_int 传参会 OverflowError，被
 # except 吞掉后 is_elevated() 永远返回 False（提权成功也显示普通用户）。
 check("is_elevated() 返回 bool（不抛异常）", isinstance(G.is_elevated(), bool))
-check("测试进程未提权时结果为 False", G.is_elevated() is False)
-# 在签名层面复刻修复后的调用链：设了 argtypes 后伪句柄必须能原样传进去
+# 「未提权时返回 False」只在普通权限的终端里成立。CI runner 是以 Administrator
+# 跑的，硬断言 False 会假红；改成和另一个独立实现（shell32.IsUserAnAdmin）对拍：
+# 两个不同的 API 必须给出一致结论 —— 比只看一边更严，且任何权限环境都成立。
 import ctypes  # noqa: E402
 from ctypes import wintypes  # noqa: E402
+_shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+_shell32.IsUserAnAdmin.restype = wintypes.BOOL
+_expect = bool(_shell32.IsUserAnAdmin())
+check(f"与 IsUserAnAdmin 对拍一致（本进程{'已' if _expect else '未'}提权）",
+      G.is_elevated() is _expect)
+# 在签名层面复刻修复后的调用链：设了 argtypes 后伪句柄必须能原样传进去
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 adv = ctypes.WinDLL("advapi32", use_last_error=True)
 k32.GetCurrentProcess.restype = wintypes.HANDLE
