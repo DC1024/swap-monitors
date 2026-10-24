@@ -382,6 +382,92 @@ for _args in (["--list", "--json"], ["--list"]):
               f"{type(e).__name__}: {e}")
 
 
+# ============================================================
+section("⑦ 提权待办标记必须落到配置里（不能只写实例属性）")
+
+# 背景：_prompt_elevate_for_admin 里原来写的是 self._pending_admin_setup
+# （实例属性），而 _admin_selfheal 读的是 self.cfg["_pending_admin_setup"]。
+# 提权重启后是**新进程**，配置从磁盘读 —— 实例属性随旧进程结束就没了，
+# 于是「第一次开管理员模式」永远补建不出任务：用户只看到重启了一次、开关还是关的。
+# 注意：本文件里旧的做法是直接 save_cfg() 造数据，压根没走这条路，所以是假绿。
+import tkinter as tk                                        # noqa: E402
+
+check("配置路径确实指向临时文件（不会碰用户真实配置）", G.CFG_PATH == TEST_CFG,
+      G.CFG_PATH)
+
+# App 初始化与 _admin_selfheal 都会碰自启项，全部指到临时目录
+_orig_cmd_path = G.AUTOSTART_CMD
+G.AUTOSTART_CMD = os.path.join(TMP, "SwapMonitors.cmd")
+
+with open(TEST_CFG, "w", encoding="utf-8") as f:
+    json.dump({"hotkey": "ctrl+alt+f9", "exclude_title": ".*",
+               "run_as_admin": False, "_pending_admin_setup": False}, f, ensure_ascii=False)
+
+_root = tk.Tk()
+_root.withdraw()
+try:
+    app = G.App(_root)
+    check("初始状态：待办标记是 False", app.cfg.get("_pending_admin_setup") is False)
+
+    _elevated = []
+    _orig_yesno = G.messagebox.askyesno
+    G.messagebox.askyesno = lambda *a, **k: True          # 用户点了「是」
+    app.elevate = lambda: _elevated.append(1)             # 不真的重启
+    try:
+        started = app._prompt_elevate_for_admin()
+    finally:
+        G.messagebox.askyesno = _orig_yesno
+
+    check("确认后返回 True（已发起提权重启）", started is True)
+    check("确实调用了 elevate()", _elevated == [1])
+    check("标记写进了 cfg", app.cfg.get("_pending_admin_setup") is True)
+    check("没有写成同名实例属性（这正是要修的 bug）",
+          "_pending_admin_setup" not in vars(app), str(sorted(vars(app)))[:200])
+    with open(TEST_CFG, encoding="utf-8") as f:
+        _disk = json.load(f)
+    check("标记已经落盘（提权后的新进程读的就是它）",
+          _disk.get("_pending_admin_setup") is True, str(_disk))
+
+    # 模拟提权后的新进程：丢掉内存状态，重新从磁盘读配置
+    app.cfg = G.load_cfg()
+    check("新进程能读到待办", app.cfg.get("_pending_admin_setup") is True)
+
+    _orig_elev, _orig_task = G.is_elevated, G.create_elevated_task
+    G.is_elevated = lambda: True
+    G.create_elevated_task = lambda: (True, "")
+    try:
+        app._admin_selfheal()
+    finally:
+        G.is_elevated, G.create_elevated_task = _orig_elev, _orig_task
+
+    check("自愈后 run_as_admin 被置 True", app.cfg.get("run_as_admin") is True)
+    check("待办标记用完即清", app.cfg.get("_pending_admin_setup") is False)
+    check("管理员开关同步点亮", bool(app.admin_var.get()) is True)
+    with open(TEST_CFG, encoding="utf-8") as f:
+        _disk2 = json.load(f)
+    check("清掉的状态也落盘了", _disk2.get("_pending_admin_setup") is False, str(_disk2))
+
+    # 反向：未提权就回来（用户在 UAC 上点了「否」）→ 不能留下永远待办
+    with open(TEST_CFG, "w", encoding="utf-8") as f:
+        json.dump({"hotkey": "ctrl+alt+f9", "exclude_title": ".*",
+                   "run_as_admin": False, "_pending_admin_setup": True}, f)
+    app.cfg = G.load_cfg()
+    _orig_elev = G.is_elevated
+    G.is_elevated = lambda: False
+    try:
+        app._admin_selfheal()
+    finally:
+        G.is_elevated = _orig_elev
+    check("提权失败也不留永远待办", app.cfg.get("_pending_admin_setup") is False)
+    check("提权失败时管理员模式保持关闭", app.cfg.get("run_as_admin") is False)
+finally:
+    try:
+        _root.destroy()
+    except Exception:                                        # noqa: BLE001
+        pass
+    G.AUTOSTART_CMD = _orig_cmd_path
+
+
 print()
 if failures:
     print(f"共 {len(failures)} 项失败: {failures}")

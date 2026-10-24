@@ -1639,8 +1639,12 @@ class App:
                 parent=self.root):
             self.set_status("已取消：未开启管理员模式")
             return False
-        # 标记"本次提权是为了落实管理员模式"，提权后的实例凭它自动补建任务
-        self._pending_admin_setup = True
+        # 标记"本次提权是为了落实管理员模式"，提权后的实例凭它自动补建任务。
+        # 必须写进 cfg（会被 _save 落盘）—— 提权重启是**新进程**，配置从磁盘读；
+        # 写成 self._pending_admin_setup（实例属性）只能活到本进程结束，
+        # 新进程读不到，于是「第一次开管理员模式」永远补建不出任务
+        # （v1.1.7 及之前就是这样：用户只看到重启了一次，开关还是关的）。
+        self.cfg["_pending_admin_setup"] = True
         self._save()
         self.elevate()
         return True
