@@ -1,0 +1,76 @@
+name: CI
+
+# 为什么 CI 只跑这 7 个脚本：
+#   test_selftest / test_maximized 需要**两块真实显示器**（runner 只有一块），
+#   verify_gui / tray_probe / demo_windows 是人工交互脚本。
+#   剩下这些要么是纯逻辑，要么只依赖 Tk，可以在 GitHub 的 Windows runner 上跑。
+#
+# 触发器里带上 push（不限分支）：这样推送修复分支时也能立刻看到 CI 结果，
+# 不用等 PR。
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # 同一个分支连续推两次，取消前一次，省 runner 时间
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 环境信息
+        run: |
+          python -c "import sys, tkinter; print(sys.version); print('tk', tkinter.TkVersion)"
+
+      - name: 语法检查
+        run: python -m compileall -q swap_gui.py swap_windows.py make_icon.py tests
+
+      # ---- 纯逻辑：不创建窗口、不移动窗口，任何机器都能跑 ----
+      - name: 纯逻辑测试
+        run: |
+          python tests/test_map.py
+          python tests/test_static.py
+          python tests/test_elevate.py
+          python tests/test_autostart.py
+          python tests/test_hardening.py
+
+      # ---- 需要 Tk：会建主窗口并枚举一次窗口，但不动任何真实窗口 ----
+      - name: GUI 相关测试
+        run: |
+          python tests/test_arrange.py
+          python tests/test_admin_mode.py
+
+      # ---- 冒烟：CLI 真跑一次（单屏也能跑 --list） ----
+      - name: CLI 冒烟
+        run: |
+          python swap_windows.py --list --json > list.json
+          python -c "import json; d=json.load(open('list.json',encoding='utf-8')); assert d['ok'] and d['monitors'], d; print('monitors:', len(d['monitors']), 'windows:', len(d['windows']))"
+          python swap_windows.py --dry-run --json > plan.json
+          python -c "import json; d=json.load(open('plan.json',encoding='utf-8')); print('dry-run ok:', d['ok'], 'plan:', len(d['plan']))"
+
+      - name: 失败时留档
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-logs
+          path: |
+            list.json
+            plan.json
+          if-no-files-found: ignore
+          retention-days: 7
