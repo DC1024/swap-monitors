@@ -278,6 +278,25 @@ def _mon_index(hmon, monitors):
     return None
 
 
+def _title_hits(pat, title):
+    """标题是否命中这个正则 —— 排除和只处理两条路径共用同一套判定。
+
+    以前这里两边不一致：排除走 `skip_title.match()`（**只从标题开头**匹配），
+    只处理走 `only_title.search()`（任意位置）。于是 --exclude-title Steam 只
+    排除「Steam 开头的窗口」，标题叫「打开 Steam 商店」的照样被搬走 —— 而
+    README 只好教用户写成 `.*Steam.*` 绕过去。
+
+    现在统一用 search：写 Steam 就是「标题里含 Steam」。默认的
+    DEFAULT_SKIP_TITLE 自带 ^...$，锚定语义不受影响（^ 在 search 下仍然指
+    字符串开头）。顺手把 strip 也统一了：带前导空格的标题两边判定一致。
+
+    注意这里**不**替调用方判断「标题是否为空」：排除那条路径的 `title and`
+    守卫留在原处，行为才和改动前一模一样（比如排除正则写成 `.*` 时，无标题
+    窗口不该被一起排掉）。
+    """
+    return pat.search((title or "").strip()) is not None
+
+
 def enumerate_windows(monitors, skip_title, only_title=None, only_proc=None,
                       include_minimized=True, exclude_pids=()):
     wins = []
@@ -301,7 +320,7 @@ def enumerate_windows(monitors, skip_title, only_title=None, only_proc=None,
         user32.GetClassNameW(hwnd, cbuf, 256)
         cls = cbuf.value
 
-        if cls in SKIP_CLASSES or (title and skip_title.match(title.strip())):
+        if cls in SKIP_CLASSES or (title and _title_hits(skip_title, title)):
             return True
         exstyle = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         if exstyle & WS_EX_TOOLWINDOW:
@@ -325,7 +344,7 @@ def enumerate_windows(monitors, skip_title, only_title=None, only_proc=None,
             return True
         pname = proc_name(pid.value)
 
-        if only_title and not only_title.search(title):
+        if only_title and not _title_hits(only_title, title):
             return True
         if only_proc and not (pname and only_proc.search(pname)):
             return True
@@ -794,8 +813,10 @@ def main(argv=None):
                    help="自定义排列：逐条写「源屏>目标屏」，编号见 --list")
     p.add_argument("--scale", action="store_true", help="不同分辨率时按比例缩放")
     p.add_argument("--translate-only", action="store_true", help="强制纯平移")
-    p.add_argument("--exclude-title", help="额外排除的窗口标题正则")
-    p.add_argument("--only-title", help="只处理标题匹配的窗口（测试用）")
+    p.add_argument("--exclude-title",
+                   help="额外排除的窗口标题正则（标题里含匹配片段就排除，如 Steam）")
+    p.add_argument("--only-title",
+                   help="只处理标题里含匹配片段的窗口（测试用）")
     p.add_argument("--only-proc", help="只处理进程名匹配的窗口")
     p.add_argument("--exclude-pid", help="排除这些进程（逗号分隔），如 GUI 自己")
     p.add_argument("--skip-minimized", action="store_true",
