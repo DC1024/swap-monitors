@@ -1774,6 +1774,12 @@ class App:
 
     # ---------- 数据刷新 ----------
     def refresh(self):
+        if self.busy:
+            # 互换正在进行：这会儿读到的窗口位置本来就在变，刷出来是错的；
+            # 更麻烦的是 run_with_args 里的 redirect_stdout 是**进程级**的，
+            # 主线程这会儿进去会把 worker 的 JSON 抢到自己缓冲区（见 run_with_args）。
+            self.set_status("上一次操作还在进行中…")
+            return None
         ns = self._make_args()
         ns.list = True
         data = run_with_args(ns)
@@ -2379,13 +2385,22 @@ def sw_resource_dir():
     return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 
 
+# swap() 全局只能有一个在跑。原因不是性能，是正确性：
+# contextlib.redirect_stdout 换掉的是**进程级**的 sys.stdout，两个线程同时
+# 进来就会互相写对方的缓冲区 —— 用户按下热键互换、顺手点一下「刷新」，
+# 两边拿到的都是拼接过的垃圾，json.loads 直接失败，界面报「输出解析失败」，
+# 可窗口其实已经动了。swap() 本身只有几十到几百毫秒，串行完全够用。
+_SWAP_LOCK = threading.Lock()
+
+
 def run_with_args(ns):
     """用命名空间直接跑 swap()（argparse 是按 argv 解析的，传对象更省事），回收 JSON。"""
     import contextlib
     import io
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        rc = sw.swap(ns)
+    with _SWAP_LOCK:
+        with contextlib.redirect_stdout(buf):
+            rc = sw.swap(ns)
     text = buf.getvalue().strip()
     try:
         data = json.loads(text.splitlines()[-1]) if text else {}
