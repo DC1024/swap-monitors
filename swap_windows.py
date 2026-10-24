@@ -720,7 +720,10 @@ def swap(args):
             print(json.dumps(payload, ensure_ascii=True))
         return 0
 
-    fg = user32.GetForegroundWindow()  # 互换过程会短暂改变前台窗口，结束后还原
+    # 互换过程会短暂改变前台窗口，结束后还原。
+    # GUI 里「互换后把焦点还给原来的窗口」取消勾选时整段跳过（fg 置 0，下面的
+    # `if fg` 自然不成立）。getattr 默认 True 是为了让不带这个字段的老命令行不变。
+    fg = user32.GetForegroundWindow() if getattr(args, "restore_focus", True) else 0
     ok_n = warn = denied = 0
     for p in plan:
         w, target, dst = p["w"], p["to"], p["dst"]
@@ -797,6 +800,9 @@ def main(argv=None):
     p.add_argument("--exclude-pid", help="排除这些进程（逗号分隔），如 GUI 自己")
     p.add_argument("--skip-minimized", action="store_true",
                    help="不处理最小化窗口")
+    # store_false 的默认值就是 True：不写这个参数时行为和以前完全一样
+    p.add_argument("--no-restore-focus", dest="restore_focus", action="store_false",
+                   help="互换后不把原来的前台窗口切回来")
     p.add_argument("-v", "--verbose", action="store_true", help="逐个打印结果")
     p.add_argument("-q", "--quiet", action="store_true", help="静默模式")
     p.add_argument("--json", action="store_true", help="以 JSON 输出（给 GUI 用）")

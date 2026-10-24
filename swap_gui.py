@@ -1985,6 +1985,9 @@ class App:
         a.only_proc = None
         a.exclude_pid = str(os.getpid())      # 别把本窗口自己换走
         a.skip_minimized = bool(self.skipmin_var.get())
+        # 以前这个勾选框只是存进配置、没人读 —— swap_windows 里无条件还原前台窗口，
+        # 取消勾选也照样抢焦点。现在真的传给底层了。
+        a.restore_focus = bool(self.focus_var.get())
         a.verbose = False
         a.quiet = True
         a.json = True
