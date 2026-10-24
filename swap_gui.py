@@ -1105,11 +1105,22 @@ def task_runlevel_is_highest():
     return "HighestAvailable" in _task_xml_text()
 
 
+def _task_command(xml=None):
+    """从任务 XML 里取出 <Command> 并**反转义**；没有任务就返回 None。
+
+    `_task_xml()` 写入时用 saxutils.escape 转义过，`schtasks /query /xml`
+    查回来的当然还是转义形态。不还原就直接和 `_task_exe()` 比，装在
+    `C:\\Tools\\R&D\\` 这种带 `&` 的目录下必然不等 —— 表现是每次启动都
+    判定「路径变了」去重建任务（`sync_task_if_moved`），明明什么都没改。
+    """
+    text = _task_xml_text() if xml is None else xml
+    m = re.search(r"<Command>(.*?)</Command>", text, re.S)
+    return saxutils.unescape(m.group(1).strip()) if m else None
+
+
 def task_points_to_current_exe():
-    m = re.search(r"<Command>(.*?)</Command>", _task_xml_text(), re.S)
-    if not m:
-        return False
-    return _same_path(m.group(1).strip(), _task_exe())
+    cmd = _task_command()
+    return cmd is not None and _same_path(cmd, _task_exe())
 
 
 def create_elevated_task():
@@ -1185,8 +1196,8 @@ def sync_task_if_moved():
         xml = _task_xml_text()
         if not xml:
             return False
-        m = re.search(r"<Command>(.*?)</Command>", xml, re.S)
-        if m and _same_path(m.group(1).strip(), _task_exe()) and "HighestAvailable" in xml:
+        cmd = _task_command(xml)
+        if cmd is not None and _same_path(cmd, _task_exe()) and "HighestAvailable" in xml:
             return False                 # 已经是我们要的样子，不用动
         if not is_elevated():
             return False
