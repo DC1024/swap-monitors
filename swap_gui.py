@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import traceback
 from ctypes import wintypes
 from tkinter import font as tkfont
 from tkinter import messagebox
@@ -1264,6 +1265,7 @@ class App:
         self._overflow_hinted = False   # 「图标被收进 ^ 溢出区」是否已提示过
         self._tray_beat = 0        # 托盘心跳计数：定期确认图标还在
         self._tray_reinit_left = 10   # 心跳重挂的次数上限，防止无意义地一直重试
+        self._poll_errors = 0      # 界面心跳连续出错次数（只影响日志频率，不影响运行）
         self._hiding = False       # 防止 <Unmap> 递归
         self.perm = {}             # {源屏(1起): 目标屏(1起)} 哪块屏送往哪块屏
         self._perm_n = None        # 上次初始化排列时的屏数，屏数变了要重新校验
@@ -2149,6 +2151,32 @@ class App:
 
     # ---------- 事件循环 ----------
     def _poll(self):
+        """80ms 一次的界面心跳：消费后台线程的消息、维护托盘图标。
+
+        **任何异常都不许逃出去**，而且重排必须放在 finally —— 两件事缺一不可。
+        Tk 的 after 回调抛出后，traceback 只进 stderr（--windowed 的 exe 连
+        stderr 都没有），而末尾那句 after() 再也执行不到，心跳就**永久停摆**。
+        用户看到的是：热键还响（RegisterHotKey 在 TrayThread 自己的消息循环里，
+        不依赖这里），但托盘菜单点不动、状态栏冻住、双击图标叫不出窗口，
+        只能重启程序 —— 而且没有任何线索。
+        """
+        try:
+            self._poll_once()
+        except Exception:                                    # noqa: BLE001
+            try:
+                self._on_poll_error()
+            except Exception:                                # noqa: BLE001
+                pass                    # 连报错都出错就彻底闭嘴，绝不能再抛
+        else:
+            self._poll_errors = 0       # 这一轮干净跑完，计数归零
+        finally:
+            # 无条件重排：上面哪一步炸了，心跳都得继续跳
+            try:
+                self.root.after(80, self._poll)
+            except tk.TclError:
+                pass                    # 窗口已销毁（退出流程），正常现象
+
+    def _poll_once(self):
         # 第二个实例被单实例守卫挡下时会留下旗标，代表"用户又点了一次图标"，
         # 这里消费掉并把界面亮出来 —— 双击 exe 就等于把已运行的窗口叫到前台。
         if _consume_show_flag():
@@ -2207,7 +2235,20 @@ class App:
                     self._on_swapped(*val)
         except queue.Empty:
             pass
-        self.root.after(80, self._poll)
+
+    def _on_poll_error(self):
+        """心跳出错：写日志 + 提示一次。
+
+        心跳 80ms 一次，坏掉的话一分钟能刷 750 条 —— 必须限流，否则
+        error.log 会被自己冲爆（它有 200KB 上限，会整份清空，前面的线索全丢）。
+        所以只记前 3 次和每 500 次，其余只累加计数。
+        """
+        self._poll_errors += 1
+        if self._poll_errors <= 3 or self._poll_errors % 500 == 0:
+            sw.log_error(f"界面心跳出错（第 {self._poll_errors} 次）：\n"
+                         + traceback.format_exc())
+        if self._poll_errors == 1:
+            self.set_status("界面刷新出了点问题，已记入日志（热键仍可用）")
 
     def _hk_label(self, ok=True):
         extra = ""
