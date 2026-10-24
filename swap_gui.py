@@ -1194,6 +1194,21 @@ def verify_elevated_task():
     return "\n".join(lines)
 
 
+def _re_ok(pat):
+    """这段正则能不能编译（空串算合法，表示「不过滤」）。
+
+    只回答能不能用，不弹框、不改值 —— 输入框的 write trace 每敲一个字符就会
+    调一次，任何有副作用的校验都会把正常输入搅坏（见 App._save 的注释）。
+    """
+    if not pat:
+        return True
+    try:
+        re.compile(pat, re.I)
+        return True
+    except re.error:
+        return False
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -2185,13 +2200,16 @@ class App:
         return True
 
     def _save(self, *_):
-        bad_re = not self._check_exclude_re()
+        # 这里**绝对不能**弹框、也不能回写输入框。_save 挂在 ex_var 的 write trace
+        # 上（每敲一个字符触发一次），一旦在里头弹模态框 + set() 回写，就变成
+        # 「打字 → 弹框 → 值被改回去」：连 (Steam|Epic).* 这种正常正则都打不进去，
+        # 用户只会看到输入被莫名吞掉。校验只放在 <FocusOut>（见 _check_exclude_re）。
+        pat = self.ex_var.get().strip()
         self.cfg.update({
             "hotkey": self.hk_var.get().strip(),
             # 正则写错时保留上一个能用的值：坏值一旦落盘，下次启动
             # 每次互换都会失败，而界面上根本看不出为什么
-            "exclude_title": (self.cfg.get("exclude_title", "")
-                              if bad_re else self.ex_var.get().strip()),
+            "exclude_title": pat if _re_ok(pat) else self.cfg.get("exclude_title", ""),
             "skip_minimized": bool(self.skipmin_var.get()),
             "scale": bool(self.scale_var.get()),
             "restore_focus": bool(self.focus_var.get()),
@@ -2200,8 +2218,6 @@ class App:
             "permute": {str(k): v for k, v in sorted(self.perm.items())},
             "run_as_admin": bool(self.admin_var.get()),
         })
-        if bad_re:
-            self.ex_var.set(self.cfg["exclude_title"])
         # 只落已知的键 —— 顺便把老版本留下的 start_minimized 之类陈旧配置清掉，
         # 否则它会一直躺在那儿让人误以为是有效的设置
         save_cfg({k: self.cfg[k] for k in DEFAULT_CFG if k in self.cfg})
