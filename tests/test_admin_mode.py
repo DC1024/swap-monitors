@@ -116,7 +116,14 @@ check("无 BOM 但满是 NUL 的 UTF-16LE 也能正确解码",
       "HighestAvailable" in G._decode_console(utf16_nobom))
 check("普通 ASCII（mbcs）照常解码", "SUCCESS" in G._decode_console(b"SUCCESS: ok\r\n"))
 check("空输入返回空串", G._decode_console(b"") == "")
-check("GBK 中文能解码", "任务" in G._decode_console("任务已创建".encode("gbk")))
+# mbcs 优先是对的：schtasks 在本机就是用**系统 ANSI 代码页**输出。所以「GBK 字节
+# 能被解出中文」只在中文系统（ACP=936）成立；英文系统的 mbcs 是 cp1252，那串 GBK
+# 字节会（不报错地）解成乱码，压根走不到 gbk 那一档。
+_ACP = ctypes.windll.kernel32.GetACP()
+if _ACP == 936:
+    check("GBK 中文能解码", "任务" in G._decode_console("任务已创建".encode("gbk")))
+else:
+    print(f"  ⏭  GBK 中文能解码（跳过：本机 ACP={_ACP}，mbcs 不是 cp936，走不到 gbk 那一档）")
 check("原来的写法（mbcs 硬解）确实会坏 —— 反证这个坑是真的",
       "HighestAvailable" not in utf16_bom.decode("mbcs", errors="replace"))
 
@@ -346,6 +353,11 @@ check("swap_windows.py 里已没有 ensure_ascii=False（机器可读输出一�
       "ensure_ascii=False" not in _src_sw)
 
 # 真跑一次：把子进程的控制台编码强制成 gbk，复现 exe 里的真实条件
+# 单屏/无屏机器上 --list 本来就返回 1（swap() 一进来先判显示器数量），
+# 所以这里只关心「编码有没有崩」：多屏要求 rc=0，单屏允许 rc=1。
+import swap_windows as sw                                   # noqa: E402
+_multi_mon = (len(sw.enumerate_monitors()) >= 2
+              and not os.environ.get("SWAPMON_FORCE_SINGLE"))
 _env = dict(os.environ)
 _env["PYTHONIOENCODING"] = "gbk"
 _env["SWAPMONITORS_CONFIG"] = TEST_CFG
@@ -354,9 +366,10 @@ for _args in (["--list", "--json"], ["--list"]):
         _p = subprocess.run([sys.executable, os.path.join(ROOT, "swap_windows.py")] + _args,
                             capture_output=True, env=_env, timeout=90)
         _err = _p.stderr.decode("mbcs", "replace")
-        _ok = _p.returncode == 0 and "UnicodeEncodeError" not in _err
-        check(f"GBK 控制台下 `swap_windows.py {' '.join(_args)}` 正常退出（rc={_p.returncode}）",
-              _ok, _err[-300:])
+        _rc_ok = _p.returncode == 0 if _multi_mon else _p.returncode in (0, 1)
+        _ok = _rc_ok and "UnicodeEncodeError" not in _err
+        check(f"GBK 控制台下 `swap_windows.py {' '.join(_args)}` 正常退出（rc={_p.returncode}"
+              f"{'' if _multi_mon else '，单屏机器'}）", _ok, _err[-300:])
         if _args == ["--list", "--json"] and _p.returncode == 0:
             _d = json.loads(_p.stdout.decode("ascii", "replace"))
             check("--json 输出可被 json.loads 解析且 ok=True", bool(_d.get("ok")),

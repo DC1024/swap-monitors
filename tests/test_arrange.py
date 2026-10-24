@@ -63,7 +63,18 @@ def main():
     app = G.App(root)
 
     real_n = len(app.mons)
-    print(f"（本机实际 {real_n} 块屏；多屏分支用伪造数据验证）\n")
+    # SWAPMON_FORCE_SINGLE=1 可以在多屏机器上复现 CI（headless runner）的行为
+    if real_n < 2 or os.environ.get("SWAPMON_FORCE_SINGLE"):
+        # 第 1-3 节讲的全是「两块屏的排列」，可 GitHub 的 runner 是 0 块屏（headless），
+        # 真屏不存在这些断言必然全红。第 4 节已经证明伪造显示器能直接喂给控件，
+        # 这里就统一用两块伪造屏顶上 —— 测的是排列逻辑，本来与真实屏幕无关。
+        app.mons = [fake_mon(0, -2560), fake_mon(1, 0, primary=True)]
+        app._perm_n = None
+        app._ensure_perm()
+        app._sync_cards()
+        print(f"（本机实际 {real_n} 块屏，1-3 节改用 2 块伪造屏；多屏分支用伪造数据验证）\n")
+    else:
+        print(f"（本机实际 {real_n} 块屏；多屏分支用伪造数据验证）\n")
 
     # ── 1. 老配置里没有 permute 时，默认 = 互换最左两块 ─────────────────
     print("=== 1. 默认排列 ===")

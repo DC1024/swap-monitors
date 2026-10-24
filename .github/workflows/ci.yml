@@ -1,9 +1,13 @@
 name: CI
 
-# 为什么 CI 只跑这 7 个脚本：
-#   test_selftest / test_maximized 需要**两块真实显示器**（runner 只有一块），
-#   verify_gui / tray_probe / demo_windows 是人工交互脚本。
+# 为什么 CI 只跑这 8 个脚本：
+#   test_selftest / test_maximized 需要**两块真实显示器**（runner 是 0 块屏的
+#   headless 环境），verify_gui / tray_probe / demo_windows 是人工交互脚本。
 #   剩下这些要么是纯逻辑，要么只依赖 Tk，可以在 GitHub 的 Windows runner 上跑。
+#
+# 环境差异（踩过坑）：runner 是英文系统、以 Administrator 运行、没有真实显示器。
+# 所以凡是「本机跑过所以成立」的断言都必须显式处理：多屏才验的用 ⏭ 跳过，
+# 别硬断言 —— 否则 CI 红的全是环境噪音，真问题反而被淹掉。
 #
 # 触发器里带上 push（不限分支）：这样推送修复分支时也能立刻看到 CI 结果，
 # 不用等 PR。
@@ -75,21 +79,9 @@ jobs:
           done
           exit $fail
 
-      # ---- 冒烟：CLI 真跑一次（单屏也能跑 --list） ----
+      # ---- 冒烟：CLI 真跑一次 ----
+      # 逻辑放在 tests/test_cli_smoke.py 里，不要写成内联 shell：runner 上
+      # `--list --json` 会返回 1 且没有任何输出，内联脚本里的 json.load 必崩。
+      # 脚本自己会区分「环境不满足 → 显式跳过」和「真的坏了 → 红」。
       - name: CLI 冒烟
-        run: |
-          python swap_windows.py --list --json > list.json
-          python -c "import json; d=json.load(open('list.json',encoding='utf-8')); assert d['ok'] and d['monitors'], d; print('monitors:', len(d['monitors']), 'windows:', len(d['windows']))"
-          python swap_windows.py --dry-run --json > plan.json
-          python -c "import json; d=json.load(open('plan.json',encoding='utf-8')); print('dry-run ok:', d['ok'], 'plan:', len(d['plan']))"
-
-      - name: 失败时留档
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failure-logs
-          path: |
-            list.json
-            plan.json
-          if-no-files-found: ignore
-          retention-days: 7
+        run: python tests/test_cli_smoke.py
