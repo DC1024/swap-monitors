@@ -55,6 +55,11 @@ def section(t):
     print(f"== {t} ==")
 
 
+def skip(name, why):
+    """环境不满足，这条用例跑不了 —— 明确打出来，不假装通过。"""
+    print(f"  ⏭  {name}（跳过：{why}）")
+
+
 def expect_reject(spec):
     try:
         got = G.parse_hotkey(spec)
@@ -226,7 +231,18 @@ except Exception as e:                       # noqa: BLE001
     check("反向：日志写不进去时静默吞掉、不抛异常", False, f"{type(e).__name__}: {e}")
 sw.LOG_PATH = _orig_log
 
-check("log_error 会自己建目录", os.path.isdir(os.path.dirname(sw.LOG_PATH)))
+# 真正要测的是 log_error 会自己把目录建出来。原来的写法断言的是
+# %APPDATA%\SwapMonitors 存在 —— 本机跑过程序所以它当然在，干净的 runner 上
+# 就是假红（那目录根本没被写过）。改成指到一个多级都不存在的路径再写。
+_nested_root = tempfile.mkdtemp(prefix="swapmon-nested-")
+_nested_log = os.path.join(_nested_root, "a", "b", "error.log")
+_orig_log2, sw.LOG_PATH = sw.LOG_PATH, _nested_log
+try:
+    sw.log_error("建目录")
+    check("log_error 会自己建目录", os.path.isdir(os.path.dirname(_nested_log)))
+    check("建完目录后日志真的写进去了", os.path.exists(_nested_log))
+finally:
+    sw.LOG_PATH = _orig_log2
 
 # ============================================================
 section("④ 非法正则：给干净提示，不许抛 re.error 崩掉")
@@ -245,6 +261,12 @@ def run_cli(args, env=None):
                           timeout=120, env=e)
 
 
+# swap() 一进来就先判显示器数量（<2 直接返回 1），走不到正则校验那一步。
+# GitHub 的 runner 只有一块虚拟屏，所以「提示是人话」「合法正则照常工作」
+# 这两类断言在单屏机器上必然假红 —— 显式跳过，别拿假绿掩盖。
+_multi = (len(sw.enumerate_monitors()) >= 2
+          and not os.environ.get("SWAPMON_FORCE_SINGLE"))
+
 for flag in ("--exclude-title", "--only-title", "--only-proc"):
     r = run_cli(["--list", flag, "("])
     check(f"`{flag} (` 不崩溃（有返回码，无 traceback）",
@@ -252,11 +274,17 @@ for flag in ("--exclude-title", "--only-title", "--only-proc"):
           f"rc={r.returncode} stderr={r.stderr[:160]!r}")
     if r.returncode != 0:
         out = (r.stdout + r.stderr).decode("utf-8", "replace")
-        check(f"`{flag} (` 的提示是人话（提到「正则写错了」）",
-              "正则写错了" in out, out[:160])
+        if _multi:
+            check(f"`{flag} (` 的提示是人话（提到「正则写错了」）",
+                  "正则写错了" in out, out[:160])
+        else:
+            skip(f"`{flag} (` 的提示是人话", "单屏机器走不到正则校验")
 
-r = run_cli(["--list", "--exclude-title", "示例"])
-check("合法正则照常工作", r.returncode == 0, f"rc={r.returncode}")
+if _multi:
+    r = run_cli(["--list", "--exclude-title", "示例"])
+    check("合法正则照常工作", r.returncode == 0, f"rc={r.returncode}")
+else:
+    skip("合法正则照常工作", "单屏机器 --list 本来就返回 1")
 
 # 反向验证：不兜住的话 re.error 确实会往外抛
 try:
