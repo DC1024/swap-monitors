@@ -7,7 +7,7 @@ name: Release
 # 因为它测的是 git 里的代码，不是你手里那个文件。
 # 现在推 tag 就在 runner 上重新打一遍，和 tag 指向的代码严格对应。
 #
-# 四处刻意为之：
+# 六处刻意为之：
 #   1. **先校验 APP_VER 和 tag 一致**再打包。版本号没跟着改就推 tag，
 #      是这类手工发版最容易犯的错，而且发出去之后很难发现。
 #   2. 产物**先当 artifact 传一份**，再谈 Release。这样 workflow_dispatch
@@ -18,6 +18,9 @@ name: Release
 #   4. 打包**之前**先跑一遍 ci.yml。tag push 不匹配 ci.yml 的 branches 过滤器，
 #      所以以前「打 tag」这条路上是不跑测试的：红着的代码照样能变成一个 Release。
 #      这里用 workflow_call 复用，不复制测试清单。
+#   5. 打包**之后**真跑一次 exe。PE 头正常 + 大小够，只证明「这是个 exe」，
+#      不证明「这个 exe 起得来」。
+#   6. 附一份 SHA256SUMS.txt。12MB 的 exe，用户没有别的办法验证下到的是哪个文件。
 
 on:
   push:
@@ -118,11 +121,37 @@ jobs:
               raise SystemExit("产物不像一个正常的 onefile exe，停止发布")
           PY
 
+      # 上面那步只证明「这是个 exe」。少打一个 hidden import、tkinter 的 tcl
+      # 目录没进包、--add-data 的图标丢了 —— PE 头和大小全都正常，用户双击才崩。
+      # 这一步真跑一次：--help 在 main() 里走 CLI 分支，不建窗口、不抢热键，
+      # headless 的 runner 上也能跑，退出码 0 就说明整个 import 图都在包里。
+      - name: exe 冒烟
+        run: python tests/test_exe_smoke.py dist/SwapMonitors.exe
+
+      # 12MB 的 exe，用户没有别的办法验证「下到的是你发的那个」。
+      # 用 python 算而不是 sha256sum：后者是 Git Bash 带的，换个 shell 就没了，
+      # 而 python 是这条流水线里唯一确定存在的依赖。
+      - name: 生成校验和
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, pathlib
+          p = pathlib.Path("dist/SwapMonitors.exe")
+          h = hashlib.sha256(p.read_bytes()).hexdigest()
+          # 格式与 `sha256sum` 的输出一致（两个空格 + 文件名），
+          # Linux / macOS 的 sha256sum -c、Windows 的 Get-FileHash 都能直接用
+          pathlib.Path("dist/SHA256SUMS.txt").write_text(
+              f"{h}  SwapMonitors.exe\n", encoding="utf-8", newline="\n")
+          print("SHA256", h)
+          PY
+
       - name: 传一份 artifact
         uses: actions/upload-artifact@v4
         with:
           name: SwapMonitors-${{ steps.meta.outputs.tag }}
-          path: dist/SwapMonitors.exe
+          path: |
+            dist/SwapMonitors.exe
+            dist/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: 传到 GitHub Release
@@ -142,5 +171,5 @@ jobs:
             [ -n "$notes" ] || notes="见 tag $tag 的说明。"
             gh release create "$tag" --title "$title" --notes "$notes"
           fi
-          gh release upload "$tag" dist/SwapMonitors.exe --clobber
+          gh release upload "$tag" dist/SwapMonitors.exe dist/SHA256SUMS.txt --clobber
           gh release view "$tag" --json assets --jq '.assets[] | "\(.name)  \(.size) 字节"'

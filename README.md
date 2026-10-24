@@ -34,6 +34,16 @@
 到 [**Releases**](https://github.com/DC1024/swap-monitors/releases/latest) 下载 `SwapMonitors.exe`，
 双击即用，无需安装。
 
+每个 Release 里还有一个 `SHA256SUMS.txt`，想确认下载到的文件没被改动（或者没下完）：
+
+```powershell
+Get-FileHash .\SwapMonitors.exe -Algorithm SHA256   # 和 SHA256SUMS.txt 里的那串比
+```
+
+```bash
+sha256sum -c SHA256SUMS.txt                          # Linux / macOS / Git Bash
+```
+
 > 首次运行 Windows 可能提示「已保护你的电脑」（因为这是个人开发者签名缺失的 exe）。
 > 点「更多信息」→「仍要运行」即可。
 >
@@ -384,10 +394,17 @@ python tests/test_selftest.py         # 造真实窗口跑一遍互换 + 校验�
 python tests/test_maximized.py        # 最大化窗口到底能不能搬（需两块屏）
 python tests/verify_gui.py --hotkey --tray --min-check   # 启动 GUI，发真热键，点 ✕，验静默启动
 
+# ---- 需要先 build_exe.bat：验打包出来的 exe 真的能启动 ----
+python tests/test_exe_smoke.py        # --help 必须退出码 0，--bogus 必须 2（没打包就跳过）
+
 # ---- 其他 ----
 python tests/proto_multiscreen.py     # 多屏映射的可行性原型（纯数学，含「边算边移」反例）
 python tests/demo_windows.py          # 摆几个「示例」窗口，方便截图（--maximize 为最大化版）
 ```
+
+`test_exe_smoke.py` 查的是「PE 头正常」之外的那一半：少打一个 hidden import、
+tkinter 的 tcl 目录没进包 —— 这些 PE 头和文件大小全都正常，用户双击才崩。
+它只跑 `--help`（走 CLI 分支），不会建窗口、不抢热键，跑着不影响你正开着的正式版。
 
 `test_selftest.py`、`test_maximized.py` 和 `verify_gui.py` 会**真的移动窗口**，跑之前先把手头
 的事情存一下。它们都只针对自己造出来的「示例」窗口或独立测试配置，不会碰你的真实窗口和设置：
