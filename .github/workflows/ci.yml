@@ -25,6 +25,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
 
+    # GitHub 的 Windows runner 是英文系统：stdout 被重定向成管道时用的是
+    # cp1252，测试脚本里 `print("=== 1. 同分辨率…")` 会直接抛
+    # UnicodeEncodeError 把整个测试崩掉（实测 5 个脚本全挂在这里，
+    # 一行断言都没跑到）。程序本身不受影响 —— swap_windows.py 有
+    # _harden_console() 兜着，退化输出 `?`；只有测试脚本没做这层保护。
+    env:
+      PYTHONIOENCODING: utf-8
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
