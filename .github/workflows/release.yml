@@ -7,7 +7,7 @@ name: Release
 # 因为它测的是 git 里的代码，不是你手里那个文件。
 # 现在推 tag 就在 runner 上重新打一遍，和 tag 指向的代码严格对应。
 #
-# 三处刻意为之：
+# 四处刻意为之：
 #   1. **先校验 APP_VER 和 tag 一致**再打包。版本号没跟着改就推 tag，
 #      是这类手工发版最容易犯的错，而且发出去之后很难发现。
 #   2. 产物**先当 artifact 传一份**，再谈 Release。这样 workflow_dispatch
@@ -15,6 +15,9 @@ name: Release
 #   3. 建 Release 时**用 tag 的附注内容当正文**（%(contents:subject) /
 #      %(contents:body)），不再让 CI 生成一堆 "Full Changelog" 噪音 ——
 #      以前每个版本的正文都是手写的，那部分信息在 tag 里本来就有一份。
+#   4. 打包**之前**先跑一遍 ci.yml。tag push 不匹配 ci.yml 的 branches 过滤器，
+#      所以以前「打 tag」这条路上是不跑测试的：红着的代码照样能变成一个 Release。
+#      这里用 workflow_call 复用，不复制测试清单。
 
 on:
   push:
@@ -35,7 +38,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 直接调 ci.yml，不在这里抄一份测试清单：抄了就会漏（改 ci.yml 时没人记得
+  # 还有第二处），而漏掉的那个脚本恰好是最新加的、最该跑的那个。
+  # 测试挂了 → build 被 skip → 一个 Release 都不会建，tag 也不会被用掉。
+  test:
+    name: 先跑测试
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read        # 测试用不到写权限，按最小权限给
+
   build:
+    needs: test
     runs-on: windows-latest
     timeout-minutes: 25
     env:

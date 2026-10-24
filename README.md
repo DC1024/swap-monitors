@@ -303,8 +303,13 @@ build_exe.bat
 
 ### 正式发版走 CI，不手工传
 
-推一个 `v*` 标签就会触发 `.github/workflows/release.yml`：在 runner 上跑**同一条**
-`build_exe.bat`，校验产物，然后建 Release 并传 `SwapMonitors.exe`。
+推一个 `v*` 标签就会触发 `.github/workflows/release.yml`：**先把 `ci.yml` 那套测试
+完整跑一遍**，通过了才在 runner 上跑**同一条** `build_exe.bat`，校验产物，然后建
+Release 并传 `SwapMonitors.exe`。测试挂了 → 不打包、不建 Release，tag 留在那儿等你修。
+
+> 为什么这层闸门要放在发版流程里：tag push **不匹配** `ci.yml` 的 `branches` 过滤器，
+> 也就是说「打 tag」这条路上 CI 本来一次都不会跑。以前全靠人先推 main、等绿了再打 tag，
+> 忘一次就把红着的代码发出去。
 
 ```bash
 # 1) 先把 swap_gui.py 里的 APP_VER 改成新版本并提交（CI 会拿它和 tag 比对，不一致直接失败）

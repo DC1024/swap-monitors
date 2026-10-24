@@ -11,6 +11,10 @@ name: CI
 #
 # 触发器里带上 push（不限分支）：这样推送修复分支时也能立刻看到 CI 结果，
 # 不用等 PR。
+#
+# workflow_call 是给 release.yml 用的：tag push **不匹配** branches 过滤器，
+# 所以「打 tag 发版」那条路径上 CI 根本不会跑，代码绿不绿全靠人自觉。
+# 让 release.yml 直接调这个文件，测试清单就只存在一份，加脚本不会漏。
 
 on:
   push:
@@ -18,6 +22,7 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   # 同一个分支连续推两次，取消前一次，省 runner 时间
