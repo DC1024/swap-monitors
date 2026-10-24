@@ -25,8 +25,14 @@ on:
   workflow_call:
 
 concurrency:
-  # 同一个分支连续推两次，取消前一次，省 runner 时间
-  group: ci-${{ github.ref }}
+  # 同一个分支连续推两次，取消前一次，省 runner 时间。
+  #
+  # group 里必须带 github.workflow：被 release.yml 调用时，这个文件的两份实例
+  # 会同时存在（push 触发的那次 + Release 里嵌的那次），两者 github.ref 相同，
+  # 只按 ref 分组就会互相取消 —— 实测过一次，推 main 的 CI 被 release 的
+  # dispatch 直接 cancel 掉了。github.workflow 在可复用工作流里取的是**调用方**
+  # 的名字，所以两个实例天然落在不同的组。
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
