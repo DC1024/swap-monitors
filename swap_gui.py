@@ -522,18 +522,28 @@ class TrayThread(threading.Thread):
                                                    ctypes.byref(r)) == S_OK else None
 
     def _add_icon_with_retry(self, tries=6, delay=0.4):
-        """托盘就绪需要时间：explorer 刚起来时 NIM_ADD 会失败或落不到位，重试几轮。"""
+        """托盘就绪需要时间：explorer 刚起来时 NIM_ADD 会失败或落不到位，重试几轮。
+
+        关键：NIM_ADD 对同一个 (hWnd, uID) 只能成功一次，第二次会返回 False
+        （图标已经在了，实测如此）。所以「加进去了但还查不到矩形」这种情况
+        **绝不能**再调一次 NIM_ADD —— 老代码每轮都调，于是第二次起全是假失败，
+        还会把 self.nid 清成 None，导致之后刷新提示、弹气泡、退出时摘图标
+        全部静默失效。加成功过就只轮询矩形。
+        """
+        added = False
         for i in range(tries):
-            if self._add_icon():
-                if self._icon_rect() is not None:
-                    return True
-                # 加进去了但查不到矩形：可能还没画出来，再等等
-            else:
-                # 典型失败：Shell_NotifyIcon 拿不到 explorer 的窗口（开机太早）
-                self.nid = None
+            if not added:
+                added = self._add_icon()
+                if not added:
+                    # 典型失败：Shell_NotifyIcon 拿不到 explorer 的窗口（开机太早）
+                    self.nid = None
+            if added and self._icon_rect() is not None:
+                return True
             if i < tries - 1:
                 time.sleep(delay)
-        return bool(self.nid is not None and self._icon_rect() is not None)
+        # 加成功但始终查不到矩形：图标其实是在的（大概率被 Win11 收进了 ^ 溢出区），
+        # 别报「创建失败」骗人 —— 之后 _maybe_hint_overflow 会解释这件事。
+        return added
 
     def _promote_icon(self):
         """Win11：把图标标记为「固定显示」，否则它只会躺在「^ 隐藏的图标」里。
