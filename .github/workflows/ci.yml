@@ -1,6 +1,6 @@
 name: CI
 
-# 为什么 CI 只跑这 16 个脚本：
+# 为什么 CI 只跑这 17 个脚本：
 #   test_selftest / test_maximized 需要**两块真实显示器**（runner 是 0 块屏的
 #   headless 环境），verify_gui / tray_probe / demo_windows 是人工交互脚本。
 #   剩下这些要么是纯逻辑，要么只依赖 Tk，可以在 GitHub 的 Windows runner 上跑。
@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           fail=0
-          for t in test_map test_static test_elevate test_autostart test_hardening test_task_command; do
+          for t in test_map test_static test_elevate test_autostart test_hardening test_task_command test_hotkey_main_key; do
             echo "::group::$t"
             python "tests/$t.py" || { echo "::error title=$t::tests/$t.py 有断言失败"; fail=1; }
             echo "::endgroup::"

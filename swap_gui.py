@@ -379,8 +379,11 @@ def parse_hotkey(spec):
       * 主键只认 `[a-z0-9]` 和 F1–F24。原先写的是 `part.isalnum()`，
         而 Python 里 `'中'.isalnum()` 为真 → `ord('中') = 20013` 传进
         RegisterHotKey 必然失败，界面却报「已被其他程序占用」，纯误导。
+      * **主键只能有一个。** 原先 `ctrl+s+d` 会把 vk 悄悄覆盖成 D，
+        界面显示 `Ctrl+S+D`、实际注册的是 `Ctrl+D` —— 用户按 S 没反应，
+        看设置又"明明写着 S"，是最难自查的一类不一致。
     """
-    mods, vk, names = 0, None, []
+    mods, vk, vk_name, names = 0, None, "", []
     unknown = []
     for part in re.split(r"[+\-\s]+", (spec or "").strip().lower()):
         if not part:
@@ -397,14 +400,21 @@ def parse_hotkey(spec):
         elif part in ("win", "super", "cmd"):
             mods |= MOD_WIN
             names.append("Win")
-        elif re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", part):
-            vk = VK_F1 + int(part[1:]) - 1
-            names.append(part.upper())
-        elif len(part) == 1 and part in MAIN_KEYS:
-            vk = ord(part.upper())
-            names.append(part.upper())
         else:
-            unknown.append(part)
+            # 剩下的都该是主键：F1–F24 或单个字母/数字
+            if re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", part):
+                new_vk, shown = VK_F1 + int(part[1:]) - 1, part.upper()
+            elif len(part) == 1 and part in MAIN_KEYS:
+                new_vk, shown = ord(part.upper()), part.upper()
+            else:
+                unknown.append(part)
+                continue
+            if vk is not None:
+                raise ValueError(
+                    f"主键只能有一个：已经写了 {vk_name}，又出现 {shown}"
+                    f"（多出来的那个会被悄悄丢掉，注册的其实是 {vk_name}）")
+            vk, vk_name = new_vk, shown
+            names.append(shown)
     if unknown:
         raise ValueError(f"认不出这部分：{'、'.join(unknown)}"
                          f"（主键只能是字母、数字或 F1–F24）")
