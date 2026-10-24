@@ -301,6 +301,26 @@ build_exe.bat
 > 建议以纯 ASCII 保存这个 bat —— `cmd.exe` 用 OEM 代码页读批处理文件，
 > 非 ASCII 字符在部分环境下会让解析出错。
 
+### 正式发版走 CI，不手工传
+
+推一个 `v*` 标签就会触发 `.github/workflows/release.yml`：在 runner 上跑**同一条**
+`build_exe.bat`，校验产物，然后建 Release 并传 `SwapMonitors.exe`。
+
+```bash
+# 1) 先把 swap_gui.py 里的 APP_VER 改成新版本并提交（CI 会拿它和 tag 比对，不一致直接失败）
+# 2) 打附注标签：正文会被 CI 当成 Release 说明（%(contents:body)）
+git tag -a v1.2.0 -m "v1.2.0: 一句话概括" -m "详细说明……"
+git push origin v1.2.0
+```
+
+为什么要这样：以前 exe 是本地打完手工传的，**二进制和提交之间没有任何绑定** ——
+脏工作区打出来的 exe 也能挂到某个 tag 上，而 CI 照样全绿，因为它测的是 git 里的代码，
+不是你手里那个文件。现在 Release 里的 exe 一定是那个 tag 的代码在 runner 上打的。
+
+想在推 tag 之前先验证一遍流水线：Actions 里手动跑一次 `Release`，**tag 输入框留空**，
+它只打包、传 artifact，不碰任何 Release。要补传某个 tag 的附件，就把 tag 名填进去
+（`--clobber`，会替换同名附件）。
+
 ## 1.1.8 修复了什么
 
 一轮代码审查列了 15 项，这一版把其中能修的 14 项全修了（第 15 项是「两个轮询循环可以改成

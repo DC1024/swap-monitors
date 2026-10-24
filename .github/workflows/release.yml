@@ -1,0 +1,133 @@
+name: Release
+
+# 这个工作流负责**产出二进制**。ci.yml 只跑测试，一个字节的产物都不出。
+#
+# 以前 exe 是本地 build_exe.bat 打完再手工传 Release 的 —— 二进制和提交之间
+# 没有任何绑定：脏工作区打出来的 exe 也能挂到某个 tag 上，而 CI 照样全绿，
+# 因为它测的是 git 里的代码，不是你手里那个文件。
+# 现在推 tag 就在 runner 上重新打一遍，和 tag 指向的代码严格对应。
+#
+# 三处刻意为之：
+#   1. **先校验 APP_VER 和 tag 一致**再打包。版本号没跟着改就推 tag，
+#      是这类手工发版最容易犯的错，而且发出去之后很难发现。
+#   2. 产物**先当 artifact 传一份**，再谈 Release。这样 workflow_dispatch
+#      空跑一次就能验证整条链路，不用真去推 tag。
+#   3. 建 Release 时**用 tag 的附注内容当正文**（%(contents:subject) /
+#      %(contents:body)），不再让 CI 生成一堆 "Full Changelog" 噪音 ——
+#      以前每个版本的正文都是手写的，那部分信息在 tag 里本来就有一份。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要补传 exe 的 tag（留空 = 只打包成 artifact，不碰 Release）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  # 同一个 tag 连推两次就排队，别让两次上传互相覆盖
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      PYTHONIOENCODING: utf-8
+      INPUT_TAG: ${{ inputs.tag }}
+
+    steps:
+      # 要读 tag 的附注内容，必须拿全量历史 + tags（默认 fetch-depth: 1 没有 tag）
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 判断这次要不要发 Release
+        id: meta
+        shell: bash
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"; is_tag=true
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"; is_tag=true
+          else
+            tag="manual"; is_tag=false
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "is_tag=$is_tag" >> "$GITHUB_OUTPUT"
+          echo "这次 tag=$tag，发 Release=$is_tag"
+
+      # 版本号没跟着改就推 tag，是最容易犯也最难事后发现的错：
+      # exe 会以旧版本号运行，用户看标题栏根本分不出这是哪个版本。
+      - name: 校验 APP_VER 与 tag 一致
+        if: steps.meta.outputs.is_tag == 'true'
+        shell: bash
+        run: |
+          ver=$(python -c "import re;print(re.search(r'^APP_VER = \"(.*?)\"', open('swap_gui.py',encoding='utf-8').read(), re.M).group(1))")
+          tag="${{ steps.meta.outputs.tag }}"
+          echo "APP_VER=$ver  tag=$tag"
+          if [ "v$ver" != "$tag" ]; then
+            echo "::error::tag 是 $tag，但 swap_gui.py 里 APP_VER 是 $ver —— 先把版本号改掉再推 tag"
+            exit 1
+          fi
+
+      # 直接跑仓库里的脚本，而不是在这里复制一遍 pyinstaller 参数：
+      # 本地打包和 CI 打包必须是同一条命令，否则"本地能跑"就没有意义了。
+      - name: 打包
+        shell: cmd
+        run: build_exe.bat
+
+      - name: 校验产物
+        shell: bash
+        run: |
+          ls -l dist/SwapMonitors.exe
+          python - <<'PY'
+          import os, struct
+          p = "dist/SwapMonitors.exe"
+          size = os.path.getsize(p)
+          head = open(p, "rb").read(0x200)
+          off = struct.unpack_from("<I", head, 0x3C)[0]
+          ok = head[:2] == b"MZ" and head[off:off + 4] == b"PE\x00\x00"
+          print(f"大小 {size:,} 字节，PE 头 {'正常' if ok else '异常'}")
+          if not ok or size < 8_000_000:
+              raise SystemExit("产物不像一个正常的 onefile exe，停止发布")
+          PY
+
+      - name: 传一份 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SwapMonitors-${{ steps.meta.outputs.tag }}
+          path: dist/SwapMonitors.exe
+          if-no-files-found: error
+
+      - name: 传到 GitHub Release
+        if: steps.meta.outputs.is_tag == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.meta.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag 已存在，只替换附件"
+          else
+            # 正文用 tag 的附注内容：subject 当标题，body 当正文
+            title=$(git tag -l --format='%(contents:subject)' "$tag")
+            notes=$(git tag -l --format='%(contents:body)' "$tag")
+            [ -n "$title" ] || title="$tag · 多屏窗口互换"
+            [ -n "$notes" ] || notes="见 tag $tag 的说明。"
+            gh release create "$tag" --title "$title" --notes "$notes"
+          fi
+          gh release upload "$tag" dist/SwapMonitors.exe --clobber
+          gh release view "$tag" --json assets --jq '.assets[] | "\(.name)  \(.size) 字节"'
