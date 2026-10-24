@@ -30,7 +30,7 @@ from xml.sax import saxutils
 import swap_windows as sw
 
 APP_TITLE = "多屏窗口互换"
-APP_VER = "1.1.7"
+APP_VER = "1.1.8"   # 1.1.8：按代码审查清单修的一批（详见 README「自测」上方的修复说明）
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")

@@ -301,19 +301,65 @@ build_exe.bat
 > 建议以纯 ASCII 保存这个 bat —— `cmd.exe` 用 OEM 代码页读批处理文件，
 > 非 ASCII 字符在部分环境下会让解析出错。
 
+## 1.1.8 修复了什么
+
+一轮代码审查列了 15 项，这一版把其中能修的 14 项全修了（第 15 项是「两个轮询循环可以改成
+消息泵」的设计建议，不是 bug，改它要重写托盘线程的主循环，收益是省掉每秒 33 次空转唤醒 ——
+不值得冒这个险，明确不做）。每一项都配了「把修复撤掉就会变红」的回归测试。
+
+用户能感觉到的：
+
+| 之前 | 现在 |
+|---|---|
+| 勾「记住管理员模式」→ 点「是」→ 重启回来发现又没勾上 | 引导走完，计划任务建好，以后开机和双击都不再弹 UAC |
+| 在「排除的窗口标题」里打 `(Steam\|Epic).*` 会被吞字符，还每敲一个非法字符弹一次框 | 正常输入；弹框只在离开输入框且真的写错时出现，且不改你写的东西 |
+| 「预览计划」里最大化窗口那一行的「互换后」是空的 | 按窗口句柄对齐，最大化窗口也有值 |
+| 换热键失败 → 原来能用的那个热键也没了，坏值还落了盘 | 失败就回滚，原来那个继续用 |
+| 「互换后把焦点还给原来的窗口」勾不勾都一样 | 真的按勾选来 |
+| 界面刷新偶发异常 → 热键从此失灵，只能重启程序 | 异常写日志、状态栏提示一次，心跳继续跳 |
+| 连点两次互换 → 报「输出解析失败」，可窗口已经搬了 | 两条路径互斥，各自拿到自己的结果 |
+| 屏1→屏2 而屏2 不动 → 两堆窗口叠在一起，一个字都不提示 | 卡片下方红字提醒「屏2 的窗口会留在原地」 |
+| 「排除的窗口标题」写 `Steam` 只排掉 Steam **开头**的窗口 | 写 `Steam` 就排掉所有标题含 Steam 的（不用再写 `.*Steam.*`） |
+| 热键写 `ctrl+s+d` 显示 `Ctrl+S+D`，实际注册的是 `Ctrl+D` | 当场拒绝，并说明「主键只能有一个」 |
+| 程序放在 `R&D` 这类含 `&` 的目录下 → 每次启动都重建一遍计划任务 | XML 反转义，路径比对正确，不再做无用功 |
+
+另外清了四处死代码，并补齐 `user32` 三个函数的 argtypes/restype（64 位下 HWND 被截成
+32 位的隐患，本机恰好没出事，属于潜在的崩溃点）。
+
+---
+
 ## 自测
 
 ```bash
-python tests/test_map.py              # 映射逻辑与分辨率无关（纯数学，任何机器可跑）
-python tests/test_static.py           # 静态自检：有没有「引用了但没 import」的名字（任何机器可跑）
-python tests/test_elevate.py          # 提权重启前的 PyInstaller 环境清洗（纯逻辑，任何机器可跑）
-python tests/test_autostart.py        # 开机自启的「换位置自愈」逻辑（写临时目录，不碰真实启动项）
+# ---- 不会动你的窗口：任何时候都能跑 ----
+python tests/test_map.py              # 映射逻辑与分辨率无关（纯数学）
+python tests/test_static.py           # 「引用了但没 import」的全局名
+python tests/test_elevate.py          # 提权重启前的 PyInstaller 环境清洗
+python tests/test_autostart.py        # 开机自启的「换位置自愈」（写临时目录，不碰真实启动项）
+python tests/test_hardening.py        # 四项加固 + 版本号下限
+python tests/test_task_command.py     # 计划任务 XML 里的 & 反转义
+python tests/test_hotkey_main_key.py  # 热键只能有一个主键
+python tests/test_move_window.py      # move_window 的签名与三种状态分支
+python tests/test_win32_decls.py      # user32 的 argtypes/restype 有没有漏
+python tests/test_title_filter.py     # 排除/只处理标题都是「含即命中」
+python tests/test_cli_smoke.py        # 命令行真跑一次
 python tests/test_admin_mode.py       # 托盘 TaskbarCreated/图标矩形、空标题窗口、计划任务XML与单实例互斥体
-python tests/test_hardening.py        # v1.1.7 四项加固：热键必须带修饰键、任务XML转义、枚举回调兜底、非法正则提示
-python tests/test_selftest.py         # 造真实窗口跑一遍互换 + 校验最大化/最小化（需两块屏）
 python tests/test_arrange.py          # 排列编辑器逻辑：两屏/三屏/坏配置兜底（用伪造显示器）
+python tests/test_partial_perm.py     # 部分排列会提醒「目标屏的窗口会留下」
+python tests/test_preview.py          # 预览列按 hwnd 对齐（最大化窗口不再整列空）
+python tests/test_regex_input.py      # 「排除标题」逐字符输入不被吞
+python tests/test_hotkey_rollback.py  # 换热键失败要回滚
+python tests/test_tray_retry.py       # 托盘图标重试不误判失败
+python tests/test_focus_restore.py    # 「互换后把焦点还回去」真的生效
+python tests/test_poll_resilience.py  # 界面心跳出错不致命
+python tests/test_swap_serialized.py  # 两次互换不串台
+
+# ---- 会真的移动窗口：跑之前先把手头的事情存一下 ----
+python tests/test_selftest.py         # 造真实窗口跑一遍互换 + 校验最大化/最小化（需两块屏）
 python tests/test_maximized.py        # 最大化窗口到底能不能搬（需两块屏）
 python tests/verify_gui.py --hotkey --tray --min-check   # 启动 GUI，发真热键，点 ✕，验静默启动
+
+# ---- 其他 ----
 python tests/proto_multiscreen.py     # 多屏映射的可行性原型（纯数学，含「边算边移」反例）
 python tests/demo_windows.py          # 摆几个「示例」窗口，方便截图（--maximize 为最大化版）
 ```

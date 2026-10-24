@@ -330,7 +330,17 @@ for name in ("swap_gui.py", "swap_windows.py"):
     check(f"{name} 没有「引用了却没定义」的全局名",
           not undefined_globals(p), str(undefined_globals(p)))
 
-check("版本号已升到 1.1.7", G.APP_VER == "1.1.7", G.APP_VER)
+def _ver_tuple(s):
+    try:
+        return tuple(int(x) for x in str(s).split("."))
+    except (TypeError, ValueError):
+        return (0,)
+
+
+# 这里刻意只要求「不低于」而不是精确等于：精确断言每升一次版本就得改一次测试，
+# 改多了就会有人图省事把这条整行删掉。真正要守的是「加固那四项已经在里面了」
+# 这个下限，版本号写成几不影响结论。
+check("版本号不低于 1.1.8", _ver_tuple(G.APP_VER) >= (1, 1, 8), G.APP_VER)
 
 # ============================================================
 print()
