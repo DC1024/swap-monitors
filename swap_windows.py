@@ -627,6 +627,10 @@ def swap(args):
                 # swap_pair 是旧字段，两块屏时仍给出，老脚本不至于断
                 "swap_pair": sorted(s + 1 for s in perm) if len(perm) == 2 else [],
                 "windows": [{
+                    # hwnd 是窗口的稳定身份。GUI 的「预览计划」要拿它把 plan 里的
+                    # 每一项对回表格行 —— 以前用 (标题, 左边界) 当键，最大化窗口的
+                    # from 是 rcNormalPosition、表格里显示的是当前 rect，两边永远对不上。
+                    "hwnd": int(w.hwnd),
                     "monitor": (w.mon + 1) if w.mon is not None else None,
                     "state": w.state_name(), "title": w.title, "label": w.label,
                     "proc": w.proc, "pid": w.pid, **rect_json(w.rect),
@@ -685,6 +689,8 @@ def swap(args):
         # swap_pair 是旧字段，两块屏时仍给出，老脚本不至于断
         "swap_pair": sorted(s + 1 for s in perm) if len(perm) == 2 else [],
         "plan": [{
+            # 与 windows[].hwnd 同一个值，GUI 靠它把「互换后」这一列对回表格行
+            "hwnd": int(p["w"].hwnd),
             "title": p["w"].title, "proc": p["w"].proc, "pid": p["w"].pid,
             "state": p["w"].state_name(), "mode": p["pm"],
             "direction": f"屏{p['si'] + 1}→屏{p['di'] + 1}",

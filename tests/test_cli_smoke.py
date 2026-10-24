@@ -55,8 +55,10 @@ n_mon = len(sw.enumerate_monitors())
 multi = n_mon >= 2
 print(f"（本机 {n_mon} 块屏 → {'多屏，按完整流程验' if multi else '单屏/无屏，只验不崩'}\n")
 
-for args, key in ((["--list", "--json"], "monitors"),
-                  (["--dry-run", "--json"], "plan")):
+seen = {}          # key -> 解析后的 payload，最后用来对两份输出做交叉检查
+
+for args, keys in ((["--list", "--json"], ("monitors", "windows")),
+                   (["--dry-run", "--json"], ("plan",))):
     label = " ".join(args)
     print(f"== {label} ==")
     r = run(*args)
@@ -83,7 +85,24 @@ for args, key in ((["--list", "--json"], "monitors"),
         continue
     check(f"{label} 输出可被 json.loads 解析", True)
     check(f"{label} 带 ok=True", d.get("ok") is True, str(d)[:200])
-    check(f"{label} 含 {key} 列表", isinstance(d.get(key), list), str(d)[:200])
+    for k in keys:
+        check(f"{label} 含 {k} 列表", isinstance(d.get(k), list), str(d)[:200])
+    seen[label] = d
+    print()
+
+# 两份输出必须能用 hwnd 对上：GUI 的「预览计划」就是拿 windows[].hwnd 当表格行 id，
+# 再用 plan[].hwnd 把「互换后」填回去。少了这个字段，预览列只能是空白。
+if len(seen) == 2:
+    print("== windows ↔ plan 的 hwnd 契约 ==")
+    wins = seen["--list --json"]["windows"]
+    plan = seen["--dry-run --json"]["plan"]
+    check("windows[].hwnd 都是整数", all(isinstance(w.get("hwnd"), int) for w in wins),
+          str([w.get("hwnd") for w in wins])[:200])
+    check("plan[].hwnd 都是整数", all(isinstance(x.get("hwnd"), int) for x in plan),
+          str([x.get("hwnd") for x in plan])[:200])
+    check("plan 里的每个 hwnd 都能在 windows 里找到",
+          {x["hwnd"] for x in plan} <= {w["hwnd"] for w in wins},
+          str({x["hwnd"] for x in plan} - {w["hwnd"] for w in wins}))
     print()
 
 print()

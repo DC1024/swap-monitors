@@ -1730,10 +1730,16 @@ class App:
         self._sync_cards()
         self.tree.delete(*self.tree.get_children())
         for i, w in enumerate(sorted(self.wins, key=lambda x: (x["monitor"] or 9, x["left"]))):
-            self.tree.insert("", "end", values=(
-                f"屏{w['monitor']}", w["state"],
-                f"{w['left']},{w['top']}  {w['width']}×{w['height']}",
-                w["proc"] or "（管理员进程）", w.get("label") or w["title"], ""),
+            # 行 id 用 hwnd：预览时要靠它把 plan 里的每一项对回表格行。
+            # 以前拿 (标题, 左边界) 当键，最大化窗口的 plan.from 是 rcNormalPosition、
+            # 而表格里显示的是当前 rect，两边永远对不上，「互换后」那一列整片空着。
+            self.tree.insert(
+                "", "end",
+                iid=(str(w["hwnd"]) if w.get("hwnd") is not None else None),
+                values=(
+                    f"屏{w['monitor']}", w["state"],
+                    f"{w['left']},{w['top']}  {w['width']}×{w['height']}",
+                    w["proc"] or "（管理员进程）", w.get("label") or w["title"], ""),
                 tags=("odd",) if i % 2 else ())
         self.count_lbl.configure(text=f"共 {len(self.wins)} 个窗口　·　{self._map_desc()}")
         self.set_status("已刷新")
@@ -1979,16 +1985,12 @@ class App:
             plan = data.get("plan", [])
             for item in self.tree.get_children():
                 self.tree.set(item, "to", "")
-            info = {}
-            for p in plan:
-                info[(p["title"], p["from"]["left"])] = p
+            # 按 hwnd 对齐：表格行 id 就是 hwnd，plan 里也带着同一个值。
+            # 以前按 (标题, from.left) 对 —— 最大化窗口的 from 是还原位置，
+            # 和表格里显示的当前 rect 根本不是一个数，最常用的状态下整列空白。
+            info = {str(p["hwnd"]): p for p in plan if p.get("hwnd") is not None}
             for item in self.tree.get_children():
-                v = self.tree.item(item, "values")
-                try:
-                    key = (v[4], int(v[2].split(",")[0]))
-                except (ValueError, IndexError):
-                    continue
-                p = info.get(key)
+                p = info.get(item)
                 if p:
                     r = p["to"]
                     self.tree.set(item, "to", f"{p['direction']} → {r['left']},{r['top']}")
