@@ -6,8 +6,7 @@ import sys
 
 from PIL import Image, ImageDraw
 
-S = 1024          # 4 倍超采样画布
-R = 4             # 超采样倍数
+S = 1024          # 画布边长：最终 256 图标的 4 倍超采样
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
 PREVIEW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon_preview.png")
 

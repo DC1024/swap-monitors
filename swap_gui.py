@@ -426,18 +426,6 @@ def parse_hotkey(spec):
     return mods, vk, "+".join(names)
 
 
-def vk_to_spec(mods, vk):
-    """录制用：把 Tk 的 event.state + keysym 转成 'ctrl+alt+s'"""
-    parts = []
-    if mods & 0x4:
-        parts.append("ctrl")
-    if mods & 0x20000:
-        parts.append("alt")
-    if mods & 0x1:
-        parts.append("shift")
-    return parts, vk
-
-
 class TrayThread(threading.Thread):
     """独立线程持有隐藏窗口，负责：全局热键 + 托盘图标 + 托盘右键菜单。
     所有 Win32 消息都在这个线程自己的循环里处理，不干扰 Tk 的消息循环。"""

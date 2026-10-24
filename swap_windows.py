@@ -141,7 +141,7 @@ WS_CAPTION = 0x00C00000          # 有标题栏 = 是"能拖动的正常窗口"�
 # 无标题窗口（Electron 主窗、部分游戏/工具壳）只有够大才当窗口看，
 # 免得把输入法候选框、隐形辅助窗这类小尺寸伪窗口也搬走。
 UNTITLED_MIN_W, UNTITLED_MIN_H = 160, 120
-SW_MAXIMIZE, SW_MINIMIZE, SW_NORMAL = 3, 6, 1
+SW_MAXIMIZE, SW_MINIMIZE = 3, 6   # SW_MINIMIZE 只有 tests/test_selftest.py 在用
 SW_HIDE, SW_SHOWNORMAL, SW_SHOWMINIMIZED, SW_SHOWMAXIMIZED = 0, 1, 2, 3
 SW_SHOWNOACTIVATE, SW_RESTORE = 4, 9
 SWP_NOZORDER, SWP_NOACTIVATE, SWP_NOOWNERZORDER = 0x0004, 0x0010, 0x0200
@@ -161,10 +161,6 @@ DEFAULT_SKIP_TITLE = re.compile(
 SKIP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd",
                 "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow",
                 "MultitaskingViewFrame", "ForegroundStaging"}
-
-
-def _err(msg=None):
-    return ctypes.get_last_error(), msg
 
 
 # ---------------------------------------------------------------- 日志
@@ -466,8 +462,12 @@ def _center_in(r, area):
     return area.left <= cx < area.right and area.top <= cy < area.bottom
 
 
-def move_window(win, target, dst, verbose=True):
-    """按窗口状态安全落位，返回 (ok, note)。"""
+def move_window(win, target, dst):
+    """按窗口状态安全落位，返回 (ok, note)。
+
+    注意这里**不收 verbose**：逐条打印由 swap() 自己按 args.verbose 决定，
+    参数传进来也没人用（以前确实有一个，是死的）。
+    """
     hwnd, state = win.hwnd, win.state
     flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER
 
@@ -727,7 +727,7 @@ def swap(args):
     ok_n = warn = denied = 0
     for p in plan:
         w, target, dst = p["w"], p["to"], p["dst"]
-        ok, note = move_window(w, target, dst, not args.quiet)
+        ok, note = move_window(w, target, dst)
         if not ok:
             warn += 1
             msg = f"{w.label[:40]!r} {note}"
