@@ -146,6 +146,18 @@ u32.TranslateMessage.argtypes = [ctypes.POINTER(MSG)]
 u32.DispatchMessageW.argtypes = [ctypes.POINTER(MSG)]
 u32.DestroyWindow.argtypes = [wintypes.HWND]
 
+# 这三个以前**一个声明都没有**，全靠 ctypes 的默认值（参数按 c_int、返回值按
+# c_int 处理）。u32 是独立的 WinDLL 实例，拿不到 swap_windows.user32 上声明过的
+# 类型。64 位下 HWND 是 8 字节：FindWindowW 的返回值会被截成 32 位，再把截断后
+# 的值传给 GetWindowRect —— 属于「本机恰好没出事」的潜在崩溃点，不是现网 bug。
+# 本机实测 FindWindowW("Shell_TrayWnd") 返回 852304，截断前后一致，所以一直没暴露。
+u32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+u32.FindWindowW.restype = wintypes.HWND
+u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+u32.GetWindowRect.restype = wintypes.BOOL
+u32.SetForegroundWindow.argtypes = [wintypes.HWND]
+u32.SetForegroundWindow.restype = wintypes.BOOL
+
 # ---------------------------------------------------------------- 托盘图标
 
 shell32 = ctypes.WinDLL("shell32", use_last_error=True)
