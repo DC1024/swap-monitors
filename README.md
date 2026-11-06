@@ -1,5 +1,9 @@
 # 多屏窗口互换 · Swap Monitors
 
+[![CI](https://github.com/DC1024/swap-monitors/actions/workflows/ci.yml/badge.svg)](https://github.com/DC1024/swap-monitors/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/DC1024/swap-monitors)](https://github.com/DC1024/swap-monitors/releases/latest)
+[![License](https://img.shields.io/github/license/DC1024/swap-monitors)](LICENSE)
+
 > 按一下热键，把显示器上的**所有窗口整体互换**，贴附好的布局原样保留。
 > 两块屏是互换；三块以上可以互换、也可以环形轮转或任意指定哪块送往哪块。
 

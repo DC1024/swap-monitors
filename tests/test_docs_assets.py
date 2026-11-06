@@ -32,6 +32,7 @@ ROOT = os.path.dirname(HERE)
 DOCS = os.path.join(ROOT, "docs")
 
 HOMEPAGE = "https://dc1024.github.io/swap-monitors/"
+REPO_SLUG = "DC1024/swap-monitors"
 
 failures = []
 
@@ -120,10 +121,37 @@ check("README 里有指向在线介绍页的链接",
       HOMEPAGE.rstrip("/") in md,
       f"没找到 {HOMEPAGE} —— 站点部署好了却没人指路，等于白部署")
 
+print("\n== README 顶部的徽章 ==")
+# 徽章是最容易坏得无声的东西：指向的 workflow 文件一改名，图片就变成灰的
+# "no status"，页面不报错、JS 控制台也不报错，只有人盯着才发现。
+BADGE_WF_RE = re.compile(
+    r"github\.com/([^/\s]+)/([^/\s]+)/actions/workflows/([^/\s)]+)/badge\.svg")
+badge_wfs = BADGE_WF_RE.findall(md)
+check("README 里有 CI 状态徽章", bool(badge_wfs))
+
+# 仓库名写错（从别的项目复制粘贴过来）是最经典的一种，图片会静默 404
+wrong_repo = [f"{owner}/{repo}" for owner, repo, _wf in badge_wfs
+              if f"{owner}/{repo}".lower() != REPO_SLUG.lower()]
+check(f"徽章指向的仓库是 {REPO_SLUG}",
+      not wrong_repo, "写成了: " + ", ".join(wrong_repo))
+
+# 注意捕获到的文件名**已经带扩展名**（ci.yml），别再拼一次 .yml
+missing_wf = [wf for _o, _r, wf in badge_wfs
+              if not os.path.exists(
+                  os.path.join(ROOT, ".github", "workflows", wf))]
+check("徽章引用的 workflow 文件都存在",
+      not missing_wf, "找不到: " + ", ".join(missing_wf))
+
+# 只允许「会自动更新」的徽章。静态徽章（比如手写 python-3.10-3.13）等于又开了一个
+# 需要人去改的地方，改漏了还不会红 —— 版本声明已经有 test_version_claim 守着了。
+static_badges = re.findall(r"img\.shields\.io/badge/[^\s)\"']*", md)
+check("没有手写死内容的静态徽章（版本号这类请交给会自更新的来源）",
+      not static_badges, "; ".join(static_badges[:3]))
+
 print()
 if failures:
     print(f"❌ {len(failures)} 项未通过：")
     for f in failures:
         print(f"   - {f}")
     sys.exit(1)
-print("全部通过 ✅ —— 站点资源、锚点、下载链接和 README 链接都有落点")
+print("全部通过 ✅ —— 站点资源、锚点、下载链接、README 链接和徽章都有落点")
