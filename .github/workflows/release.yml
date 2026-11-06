@@ -67,6 +67,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # 补传某个 tag 的附件时（workflow_dispatch 填了 tag 名），必须检出**那个 tag
+          # 的代码**：dispatch 默认拿的是所选分支的 HEAD，一旦 main 已经往前走，打出来的
+          # exe 就是「新代码 + 旧版本号」，正是这套流水线当初要消灭的「二进制和提交对不上」。
+          # 输入为空（tag push，或只打包不发布）时回落到 github.ref，行为不变。
+          # 必须拼成 refs/tags/<tag>：checkout 见到裸名字会当**分支**去找。
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
       - name: 准备 Python
         uses: actions/setup-python@v5

@@ -118,6 +118,14 @@ check("守卫也在读 %(contents) 之前",
       -1 not in (i_guard, i_subject) and i_guard < i_subject,
       f"guard={i_guard} subject={i_subject}")
 
+print("\n== 补传某个 tag 时，打包用的必须是那个 tag 的代码 ==")
+i_co = wf.find("- name: 检出代码")
+co = wf[i_co:wf.find("- name: 准备 Python", i_co)] if i_co != -1 else ""
+check("检出步骤的 ref 跟着 inputs.tag 走",
+      "format('refs/tags/{0}', inputs.tag)" in co, co.strip()[:80])
+check("输入为空时回落到 github.ref（tag push / 只打包不受影响）",
+      "github.ref" in co, co.strip()[:80])
+
 print()
 if failures:
     print(f"❌ {len(failures)} 项未通过：")

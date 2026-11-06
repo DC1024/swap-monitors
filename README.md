@@ -343,7 +343,8 @@ git push origin v1.2.0
 
 想在推 tag 之前先验证一遍流水线：Actions 里手动跑一次 `Release`，**tag 输入框留空**，
 它只打包、传 artifact，不碰任何 Release。要补传某个 tag 的附件，就把 tag 名填进去
-（`--clobber`，会替换同名附件）。
+（`--clobber`，会替换同名附件）—— 此时检出的是**那个 tag 的代码**，不是默认分支的 HEAD，
+所以补传不会把新代码挂到旧版本号底下。
 
 ## 1.1.9 改了什么
 
