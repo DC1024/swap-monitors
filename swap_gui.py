@@ -30,7 +30,7 @@ from xml.sax import saxutils
 import swap_windows as sw
 
 APP_TITLE = "多屏窗口互换"
-APP_VER = "1.1.8"   # 1.1.8：按代码审查清单修的一批（详见 README「自测」上方的修复说明）
+APP_VER = "1.1.9"   # 1.1.9：托盘图标不再主动「固定到任务栏」（详见 README 对应小节）
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")
@@ -53,6 +53,12 @@ DEFAULT_CFG = {
     "notify_on_swap": True,     # 互换完成后是否弹托盘气泡
     "permute": None,            # {"1": 2, "2": 1} 这样的「哪块屏送往哪块屏」；None = 默认行为
     "run_as_admin": False,      # 记住管理员模式：由「最高权限」计划任务拉起，免 UAC
+    # 托盘图标要不要「固定显示在任务栏上」。**默认关** —— Win11 自己会把图标收进
+    # 任务栏的 ^ 隐藏区，那正是「安静常驻」该有的样子。v1.1.8 及以前这里是无条件
+    # 写死的（见 _promote_icon 的注释），结果用户只想让它待在托盘里，它却偏偏占了
+    # 任务栏那一格。想改回来不用动这个开关：右键任务栏 → 任务栏设置 →
+    # 其他系统托盘图标，或者直接把图标从 ^ 拖出来。
+    "promote_tray_icon": False,
     # 内部标记：勾选管理员模式后发起了提权重启，等提权后的实例回来补建任务。
     # 带下划线前缀，界面上不出现，但必须落盘（跨进程传递）。
     "_pending_admin_setup": False,
@@ -61,6 +67,9 @@ DEFAULT_CFG = {
     "_handover_show": False,
     # 内部标记：「托盘图标被 Win11 收进 ^ 隐藏区」的说明只弹一次，别反复打扰
     "_overflow_hint_acked": False,
+    # 内部标记：老版本写下的「固定显示」已经改回收进 ^，一辈子只做一次
+    # （原因见 reset_tray_promotion 的注释 —— 不做成「每次都修」是有意的）
+    "_tray_unpromote_done": False,
 }
 # 注意：这里没有 start_minimized。
 # 「手动双击也要收进托盘」是个坑 —— 用户会以为程序没启动。现在只有开机自启
@@ -438,6 +447,98 @@ def parse_hotkey(spec):
     return mods, vk, "+".join(names)
 
 
+# ======================================== 托盘图标：显示在任务栏上，还是收进 ^
+
+# Win11 把每个托盘图标的「显示 / 收起」记在这里。子键名是按 exe 路径算出来的哈希，
+# 所以**必须按 ExecutablePath 找**，不能按子键名猜：同一个程序换个目录就会多出一条，
+# 调试期间来回拷几个目录，注册表里就能攒下好几条互不相干的记录。
+NOTIFY_KEY = r"Control Panel\NotifyIconSettings"
+NOTIFY_VALUE = "IsPromoted"
+
+
+def reset_tray_promotion(cfg, reg=None, frozen=None, exe=None):
+    """把「图标固定显示在任务栏上」改回 Win11 默认的「收进 ^」，**一辈子只做一次**。
+
+    为什么要有这个函数：v1.1.8 及以前，程序一发现图标落进了 ^ 就顺手把 IsPromoted
+    写成 1，想让图标「一直看得见」。可这个值对**下次登录**是生效的 —— 于是变成：
+    用户只想让它安静待在托盘里，它偏偏占着任务栏那一格；而且记录按 exe 路径存，
+    换过几个目录就会攒下好几条，条条都写着 1，删都不知道从哪删起。
+    v1.1.9 起不再主动写这个值（除非配置里 promote_tray_icon 明确要），这里负责
+    把老版本写下的那条改回 0。
+
+    为什么只做一次（不是图省事）：用户完全可能**自己就想**让图标显示在任务栏上
+    （右键任务栏 → 任务栏设置 → 其他系统托盘图标 里能改）。每次启动都改回去，就等于
+    天天跟用户对着干。所以修完就在配置里记一笔，以后再也不碰 —— 之后的任何改动
+    都是用户自己的选择。
+
+    时序也是硬要求：必须在 Shell_NotifyIcon(NIM_ADD) **之前**调用。explorer 是在图标
+    创建那一刻去读记录的，而且以自己内存里的缓存为准；图标挂上之后再写，多半会被它
+    在图标销毁时写回去覆盖掉（2026-10-11 实测）。
+
+    返回 True 表示这次真的改动了注册表。任何失败都只返回 False，绝不抛异常。
+    """
+    if cfg.get("promote_tray_icon"):
+        return False                # 用户明确要固定在任务栏上，别动
+    if cfg.get("_tray_unpromote_done"):
+        return False                # 已经处理过；以后的变化都是用户自己的选择
+    if frozen is None:
+        frozen = bool(getattr(sys, "frozen", False))
+    if not frozen:
+        # 跑源码时托盘图标属于 python.exe，那条记录不归我们管
+        return False
+    if reg is None:
+        try:
+            import winreg as reg
+        except ImportError:         # 非 Windows
+            return False
+    if exe is None:
+        exe = os.path.abspath(sys.executable)
+
+    changed = False
+    try:
+        key = reg.OpenKey(reg.HKEY_CURRENT_USER, NOTIFY_KEY, 0,
+                          reg.KEY_READ | reg.KEY_WRITE)
+    except OSError:
+        # Win10 根本没有这个键 —— 没得修，但也算「处理过了」，
+        # 免得上 Win11 之后还得靠运气重来一次
+        cfg["_tray_unpromote_done"] = True
+        return False
+    try:
+        for i in range(reg.QueryInfoKey(key)[0]):
+            try:
+                sub = reg.EnumKey(key, i)
+                sk = reg.OpenKey(key, sub, 0, reg.KEY_READ | reg.KEY_WRITE)
+            except OSError:
+                continue            # 这条读不了（权限/刚被删），跳过，别拖累其它条
+            try:
+                path = str(reg.QueryValueEx(sk, "ExecutablePath")[0])
+                if path.lower() != exe.lower():
+                    continue        # 别的程序的记录，一根手指都不许碰
+                try:
+                    if int(reg.QueryValueEx(sk, NOTIFY_VALUE)[0]) == 0:
+                        continue    # 已经是「收进 ^」，不用动
+                except (OSError, TypeError, ValueError):
+                    continue        # 没有这个值 = 走系统默认，同样是收进 ^
+                reg.SetValueEx(sk, NOTIFY_VALUE, 0, reg.REG_DWORD, 0)
+                changed = True
+            except OSError:
+                continue
+            finally:
+                try:
+                    reg.CloseKey(sk)
+                except OSError:
+                    pass
+    except OSError:
+        pass                        # 枚举到一半被拒（权限/并发改动）：已经改的算数
+    finally:
+        try:
+            reg.CloseKey(key)
+        except OSError:
+            pass
+    cfg["_tray_unpromote_done"] = True
+    return changed
+
+
 class TrayThread(threading.Thread):
     """独立线程持有隐藏窗口，负责：全局热键 + 托盘图标 + 托盘右键菜单。
     所有 Win32 消息都在这个线程自己的循环里处理，不干扰 Tk 的消息循环。"""
@@ -557,8 +658,13 @@ class TrayThread(threading.Thread):
         return added
 
     def _promote_icon(self):
-        """Win11：把图标标记为「固定显示」，否则它只会躺在「^ 隐藏的图标」里。
-        写 HKCU 下 explorer 自己维护的记录；失败就只提示不加戏。"""
+        """把图标标记成「固定显示在任务栏上」—— 写 HKCU 里 explorer 维护的那条记录。
+
+        **默认不走这条路**，只有配置里 promote_tray_icon=true 才会被调用（v1.1.8 及
+        以前是无条件调用的）。为什么翻过来：用户要的是「安静常驻托盘」，把它固定到
+        任务栏上正好反着来，还顺手在注册表里留下一堆按路径分身的垃圾记录。
+        写失败只返回 False，不加戏。
+        """
         try:
             import winreg
             exe = os.path.abspath(sys.executable)
@@ -1527,6 +1633,13 @@ class App:
     # ---------- 热键 / 托盘 ----------
     def start_hotkey(self):
         if self.hk is None:
+            # 挂图标**之前**先把老版本留下的「固定显示」改回收进 ^。顺序不能反：
+            # explorer 是在 NIM_ADD 那一刻读这个记录的（详见 reset_tray_promotion）。
+            if not self.cfg.get("_tray_unpromote_done"):
+                reset_tray_promotion(self.cfg)
+                if self.cfg.get("_tray_unpromote_done"):
+                    # 只落这一次，下次启动就不会再碰注册表了
+                    save_cfg({k: self.cfg[k] for k in DEFAULT_CFG if k in self.cfg})
             self.hk = TrayThread(self.q, icon_path=os.path.join(sw_resource_dir(),
                                                                 "app_icon.ico"))
             self.hk.start()
@@ -2151,14 +2264,15 @@ class App:
             return None
 
     def _overflow_hint(self, tip):
-        """提示用户把图标从 ^ 里拖出来。返回 True 表示**确实展示出去了**。
+        """提示用户图标收在 ^ 里、以及想常显该怎么办。返回 True = **确实展示出去了**。
 
         实测结论（2026-10-11，Win11 + 自动隐藏任务栏）：
-          * `IsPromoted=1` 写进 HKCU\\Control Panel\\NotifyIconSettings 后**不会立刻生效**
-            —— explorer 在图标创建时读的是自己内存里的缓存，而且在图标被删掉时
-            还会把缓存里的状态写回注册表，把我们写的值覆盖掉。
-          * 所以唯一**确实管用**的办法是用户手动把图标从 ^ 拖到任务栏上，
-            拖一次之后由 explorer 自己记住。别再承诺「已自动置顶」了。
+          * `IsPromoted=1` 写进 HKCU\\Control Panel\\NotifyIconSettings 后**不会立刻
+            生效** —— explorer 在图标创建时读的是自己内存里的缓存，而且在图标被删掉
+            时还会把缓存里的状态写回注册表，把我们写的值覆盖掉。
+          * 所以别替用户决定图标放哪：v1.1.9 起默认一个字节都不写（见
+            reset_tray_promotion 的注释）。这条提示只负责说清「图标去哪了」和
+            「想让它常显该怎么做」，不再承诺任何自动效果。
         """
         if self.cfg.get("_overflow_hint_acked"):
             return False
@@ -2198,23 +2312,23 @@ class App:
                 self.root.after(1500, lambda: self._maybe_hint_overflow(attempt + 1))
             return
         if rect.left < left:
-            return                      # 已在可见区，不用管
+            return                      # 已在可见区（用户自己固定出来的），不用管
         self._overflow_hinted = True
-        # 顺手把「固定显示」标记写上（对下次 explorer 重启/重新登录有用），
-        # 但不能指望它当场生效，所以提示文案不依赖它的返回值
-        if self.hk:
+        # 老版本在这里无条件调 promote_icon()，等于把「用户只想让它待在托盘里」的
+        # 处境又往反方向推了一把。现在只有配置里明确要了才写。
+        if self.hk and self.cfg.get("promote_tray_icon"):
             self.hk.promote_icon()
-        self.set_status("托盘图标已就绪（在 ^ 隐藏区里，拖出来一次即可固定）")
+        self.set_status("托盘图标已就绪（收在 ^ 隐藏区里，想常显就拖出来）")
         # 只有**真的展示出去**了才算提示过。失败（比如弹窗那步抛异常）就留着机会，
         # 等下一次 tray_ok（explorer 重启重挂图标时还会再来一次）再试。
         if self._overflow_hint(
-                "托盘图标已经注册好了，但被 Win11 放进了任务栏的「^ 隐藏的图标」里，"
-                "所以你在托盘上看不到它。\n\n"
-                "解决办法（一次就够）：\n"
+                "托盘图标已经注册好了，按 Win11 的习惯收在任务栏的「^ 隐藏的图标」里，"
+                "所以在托盘上暂时看不到它 —— 这不是没启动，热键随时可用。\n\n"
+                "如果你更希望它一直显示在任务栏上：\n"
                 "  1. 点任务栏右下角的  ^\n"
-                "  2. 在弹出的面板里找到「多屏窗口互换」\n"
-                "  3. 把它拖到任务栏上（或右键选「固定到任务栏」）\n\n"
-                "之后它就会一直显示在那里；热键不受影响，随时可用。"):
+                "  2. 把「多屏窗口互换」拖到任务栏上\n"
+                "也可以走设置：个性化 → 任务栏 → 其他系统托盘图标 → 打开「多屏窗口互换」\n\n"
+                "拖（或打开）一次就够了，之后 Windows 自己会记住。"):
             self._overflow_hinted = True
 
     # ---------- 事件循环 ----------
