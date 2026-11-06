@@ -300,8 +300,13 @@ v1.1.6 起已从名单移除。判断「该不该跳过」的标准是它在系�
 
 ## 从源码运行
 
-只需要 **Python 3.8+（Windows）**，GUI 需要自带 tkinter 的版本（python.org 的官方版都带）。
+需要 **Python 3.10–3.13（Windows）**，GUI 需要自带 tkinter 的版本（python.org 的官方版都带）。
 没有任何 pip 依赖。
+
+> 为什么不是 3.8+：代码在**语法**上 3.8 也能跑（33 个 `.py` 用 `ast.parse(feature_version=(3, 8))`
+> 全部通过，也没用 `removeprefix` 这类 3.9 才有的 API），但 3.8 / 3.9 都已过 EOL，
+> CI 又只跑 3.12 —— 写一个从来没有被验证过的下限，等于给用户一个假的保证。
+> 想要更宽的范围，得先往 CI 矩阵里加上对应版本，再改这句话。
 
 ```bash
 python swap_gui.py            # 图形界面
@@ -316,6 +321,10 @@ build_exe.bat
 
 脚本会找一个带 tkinter 的解释器，建虚拟环境装 PyInstaller，生成图标，最后产出
 `dist\SwapMonitors.exe`。想指定解释器就设环境变量 `SWAPMONITORS_PY`。
+
+版本要求和上面一致：**3.10–3.13**。这个范围来自 PyInstaller 的支持表，`build_exe.bat`
+里也是照着它写的 —— 换更老的解释器打包不一定会立刻报错，但打出来的 exe 能不能在目标机器上
+起来就没人验证过了。
 
 > 建议以纯 ASCII 保存这个 bat —— `cmd.exe` 用 OEM 代码页读批处理文件，
 > 非 ASCII 字符在部分环境下会让解析出错。
@@ -332,7 +341,7 @@ Release 并传 `SwapMonitors.exe`。测试挂了 → 不打包、不建 Release�
 
 ```bash
 # 1) 先把 swap_gui.py 里的 APP_VER 改成新版本并提交（CI 会拿它和 tag 比对，不一致直接失败）
-# 2) 打附注标签：正文会被 CI 当成 Release 说明（%(contents:body)）
+# 2) 打附注标签：正文会被 CI 当成 Release 说明（CI 走 API 读 tag 对象的 .message）
 git tag -a v1.2.0 -m "v1.2.0: 一句话概括" -m "详细说明……"
 git push origin v1.2.0
 ```
