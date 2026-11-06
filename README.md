@@ -11,6 +11,9 @@
 
 ![界面](docs/assets/gui.png)
 
+> 不想读长文？[**在线介绍页**](https://dc1024.github.io/swap-monitors/) 有界面动图、
+> 两分钟演示视频和常见问题。那个页面上的内容跟这个 README 是同一套，只是排得好看些。
+
 ---
 
 ## 特性
@@ -416,6 +419,8 @@ python tests/test_win32_decls.py      # user32 的 argtypes/restype 有没有漏
 python tests/test_title_filter.py     # 排除/只处理标题都是「含即命中」
 python tests/test_tray_unpromote.py   # 托盘图标默认收进 ^，老版本写的「固定显示」只修一次
 python tests/test_release_notes.py    # 发布说明只来自附注 tag，不会退化成 commit message
+python tests/test_version_claim.py    # README / bat / CI 说的 Python 版本是同一个区间
+python tests/test_docs_assets.py      # 落地页资源、锚点、下载链接、README 插图都有落点
 python tests/test_cli_smoke.py        # 命令行真跑一次
 python tests/test_admin_mode.py       # 托盘 TaskbarCreated/图标矩形、空标题窗口、计划任务XML与单实例互斥体
 python tests/test_arrange.py          # 排列编辑器逻辑：两屏/三屏/坏配置兜底（用伪造显示器）
