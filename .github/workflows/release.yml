@@ -21,9 +21,9 @@ name: Release
 #   5. 打包**之后**真跑一次 exe。PE 头正常 + 大小够，只证明「这是个 exe」，
 #      不证明「这个 exe 起得来」。
 #   6. 附一份 SHA256SUMS.txt。12MB 的 exe，用户没有别的办法验证下到的是哪个文件。
-#   7. 读 tag 附注**之前**先把真正的 tag 对象 fetch 回来。tag 构建里 checkout 是按
-#      commit SHA 抓 ref 的，本地那个 refs/tags/<tag> 是**轻量标签**，`%(contents)`
-#      会回退成 commit message（非空！）。v1.1.9 首发就因此把 commit 标题挂上了发布页。
+#   7. 发布说明从 **API** 读 tag 对象，不读本地 ref。tag 构建里 checkout 是按 commit
+#      SHA 抓 ref 的，本地那个 refs/tags/<tag> 是**轻量标签**，`%(contents)` 会回退成
+#      commit message（非空！）。v1.1.9 首发就因此把 commit 标题挂上了发布页。
 
 on:
   push:
@@ -170,22 +170,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.meta.outputs.tag }}"
-          # ⚠️ 顺序不能动：tag 构建里 actions/checkout 是按 **commit SHA** 把 ref 抓进
-          # refs/tags/$tag 的，落地的是**轻量标签**；轻量标签没有自己的附注，`%(contents)`
-          # 会**回退到 commit message**（完整且非空 —— 所以「取不到就用默认值」这种判空
-          # 兜底根本拦不住）。v1.1.9 首发就中招：发布页标题变成了 commit 标题，内容还
-          # 说得通，于是更难发现。先把远端真正的 tag 对象取回来，再读附注。
-          # tests/test_release_notes.py 会盯着这句和它的位置。
-          git fetch --force origin "refs/tags/$tag:refs/tags/$tag" >/dev/null 2>&1 || true
-          if [ "$(git cat-file -t "refs/tags/$tag" 2>/dev/null)" != "tag" ]; then
-            echo "::warning::tag $tag 不是附注标签，发布说明只能回退到提交信息（以后请用 git tag -a 打标签）"
-          fi
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag 已存在，只替换附件"
           else
-            # 正文用 tag 的附注内容：subject 当标题，body 当正文
-            title=$(git tag -l --format='%(contents:subject)' "$tag")
-            notes=$(git tag -l --format='%(contents:body)' "$tag")
+            # 正文用 tag 的附注内容：第一行当标题，其余当正文。
+            #
+            # ⚠️ 千万别用本地的 `git tag -l --format='%(contents)'`：tag 构建里
+            # actions/checkout 是按 **commit SHA** 把 ref 抓进 refs/tags/<tag> 的，
+            # 落地的是**轻量标签**。轻量标签没有附注，%(contents) 会**回退到 commit
+            # message** —— 而且是一份完整、非空的提交信息，所以「取不到就用默认值」
+            # 这种判空兜底根本拦不住，只会安静地把错内容发出去。v1.1.9 首发就这么
+            # 把 commit 标题挂上了发布页（内容还说得通，于是更难发现）。
+            # 直接问 API 要 tag 对象：跟本地 ref 是附注还是轻量、checkout 怎么抓的无关。
+            obj_type=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.type)
+            if [ "$obj_type" = "tag" ]; then
+              obj_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha)
+              msg=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$obj_sha" --jq .message)
+              title=$(printf '%s\n' "$msg" | sed -n '1p')
+              notes=$(printf '%s\n' "$msg" | sed '1d' | sed '/./,$!d')
+            else
+              echo "::warning::tag $tag 是轻量标签（不是附注），发布说明只能回退到提交信息；以后请用 git tag -a 打标签"
+              title=""
+              notes=""
+            fi
             [ -n "$title" ] || title="$tag · 多屏窗口互换"
             [ -n "$notes" ] || notes="见 tag $tag 的说明。"
             gh release create "$tag" --title "$title" --notes "$notes"

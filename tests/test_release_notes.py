@@ -11,14 +11,19 @@
 
 结果：v1.1.9 的 Release 标题变成了 commit 标题。内容还说得通，所以更难发现。
 
-修法：读附注**之前**先把远端真正的 tag 对象取回来
-    git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
-再顺手用 `git cat-file -t` 判一下对象类型（轻量标签是 commit，附注标签是 tag），
-不是 tag 就发一条 warning 让人知道该用 `git tag -a`。
+修法：别读本地 ref，直接问 API 要 tag 对象（跟 checkout 怎么抓 ref 无关）：
+    gh api repos/$R/git/ref/tags/$tag  --jq .object.type   # tag = 附注，commit = 轻量
+    gh api repos/$R/git/tags/<sha>     --jq .message
+
+（先试过 `git fetch --force origin refs/tags/$tag:refs/tags/$tag` 把本地 tag 对象换
+回来，本地模拟有效；但 CI 上能不能换成功取决于 checkout 到底把 ref 抓成什么样 ——
+dispatch 那次它本来就是附注标签，tag push 那次才是轻量，两条路径不一致。既然有
+与本地状态无关的权威来源，就不赌了。）
 
 本测试做两件事：
-  1. 用一个临时 git 仓库真跑一遍「SHA fetch → 轻量标签 → 修复命令 → 附注标签」；
-  2. 静态检查 release.yml 里那句 fetch 还在，而且**排在**读 %(contents) 之前。
+  1. 用一个临时 git 仓库真跑一遍「SHA fetch → 轻量标签 → 修复手段 → 附注标签」，
+     把「%(contents) 会退化成 commit message」这个事实钉住；
+  2. 静态检查 release.yml：发布说明只走 API，且不再用本地的 %(contents)。
 
 用法: python tests/test_release_notes.py
 """
@@ -89,10 +94,10 @@ try:
           contents_subject(runner, "v9.9.9") == "COMMIT-TITLE",
           contents_subject(runner, "v9.9.9"))
 
-    # ---- 修复命令：把真正的 tag 对象取回来 ----
+    # ---- 顺带演示：本地确实能把 tag 对象取回来（但 CI 上不保险，正式修法是问 API）----
     code, _ = git(runner, "fetch", "-q", "--force", "origin",
                   "refs/tags/v9.9.9:refs/tags/v9.9.9")
-    check("取回真正的 tag 对象成功", code == 0)
+    check("fetch --force 能把真正的 tag 对象取回来", code == 0)
     code, typ = git(runner, "cat-file", "-t", "refs/tags/v9.9.9")
     check("对象类型变成 tag（附注标签）", typ == "tag", typ)
     check("标题变成 tag 附注的标题", contents_subject(runner, "v9.9.9") == "TAG-TITLE",
@@ -100,23 +105,19 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
-print("\n== release.yml：那句 fetch 必须还在，而且排在读 %(contents) 之前 ==")
+print("\n== release.yml：发布说明只能从 API 读 tag 对象 ==")
 wf = open(os.path.join(ROOT, ".github", "workflows", "release.yml"),
           encoding="utf-8").read()
 # 只看「传到 GitHub Release」这一步
 step = wf[wf.find("传到 GitHub Release"):]
-i_fetch = step.find('git fetch --force origin "refs/tags/$tag:refs/tags/$tag"')
-i_subject = step.find("%(contents:subject)")
-i_guard = step.find('git cat-file -t "refs/tags/$tag"')
-
-check("release.yml 里有取回 tag 对象的那句 fetch", i_fetch != -1)
-check("它排在 %(contents:subject) 之前（顺序反了就白取）",
-      -1 not in (i_fetch, i_subject) and i_fetch < i_subject,
-      f"fetch={i_fetch} subject={i_subject}")
-check("有对象类型守卫（轻量标签要告警，别静默用 commit 信息）", i_guard != -1)
-check("守卫也在读 %(contents) 之前",
-      -1 not in (i_guard, i_subject) and i_guard < i_subject,
-      f"guard={i_guard} subject={i_subject}")
+check("走 API 取 ref 的对象类型（git/ref/tags/$tag）",
+      "git/ref/tags/$tag" in step and ".object.type" in step)
+check("类型是 tag 才去读对象正文（git/tags/<sha>）",
+      "git/tags/$obj_sha" in step and ".object.sha" in step)
+check("轻量标签时要告警，别静默回退",
+      "::warning::" in step and "轻量标签" in step)
+check("不再用本地的 %(contents:subject/body) —— 它会在轻量标签上退回 commit message",
+      "%(contents:subject)" not in step and "%(contents:body)" not in step)
 
 print("\n== 补传某个 tag 时，打包用的必须是那个 tag 的代码 ==")
 i_co = wf.find("- name: 检出代码")
