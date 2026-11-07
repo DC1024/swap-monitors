@@ -440,9 +440,9 @@ section("⑦ 界面上真的没有漏翻的中文（中英各建一次窗）")
 # 词条表写得再整齐，只要某个 ttk.Label 忘了包 T()，界面上就是一句中文。
 import tkinter as tk                              # noqa: E402
 
-# 这些控件的文字是**运行时才定**的（窗口数、注册状态、当前排列说明……），
-# 一档只扫静态文案，它们留给下一批。名单里每减一项，都是那批的工作量。
-DYNAMIC = ("count_lbl", "perm_lbl", "perm_hint", "perm_warn", "hk_state", "status")
+# 这些控件的文字是**运行时才定**的（窗口数、注册状态、当前排列说明……）。
+# 名单里每减一项，都是那批的工作量：B3a 已经翻掉 count_lbl 和 perm_hint。
+DYNAMIC = ("perm_lbl", "perm_warn", "hk_state", "status")
 
 
 def build_app(lang):
@@ -517,6 +517,16 @@ for _lang, _want in (("zh", "多屏窗口互换"), ("en", "Swap Monitors")):
     _t = _r.title()
     _r.destroy()
     check(f"lang={_lang} 时窗口标题是 {_want!r}", _t.startswith(_want), _t)
+
+# 名单里刚缩掉 count_lbl / perm_hint，得证明它们**真有字**再被扫 —— 空字符串
+# 在英文模式下天然没有中文，那种绿是假的。
+_r, _a = build_app("en")
+try:
+    _dyn = (_a.count_lbl.cget("text"), _a.perm_hint.cget("text"))
+finally:
+    _r.destroy()
+check(f"英文下计数行 / 排列提示都有实际内容且无中文（{_dyn[0]!r} / {_dyn[1]!r}）",
+      all(bool(t.strip()) and not CJK.search(t) for t in _dyn), str(_dyn))
 
 I.set_language("zh")
 

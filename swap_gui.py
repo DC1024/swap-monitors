@@ -1994,11 +1994,12 @@ class App:
                 "", "end",
                 iid=(str(w["hwnd"]) if w.get("hwnd") is not None else None),
                 values=(
-                    f"屏{w['monitor']}", w["state"],
+                    T("屏{n}", n=w["monitor"]), w["state"],
                     f"{w['left']},{w['top']}  {w['width']}×{w['height']}",
-                    w["proc"] or "（管理员进程）", w.get("label") or w["title"], ""),
+                    w["proc"] or T("（管理员进程）"), w.get("label") or w["title"], ""),
                 tags=("odd",) if i % 2 else ())
-        self.count_lbl.configure(text=f"共 {len(self.wins)} 个窗口　·　{self._map_desc()}")
+        self.count_lbl.configure(text=T("共 {count} 个窗口　·　{desc}",
+                                        count=len(self.wins), desc=self._map_desc()))
         self.set_status("已刷新")
         return data
 
@@ -2009,7 +2010,7 @@ class App:
     def _map_desc(self):
         """映射方式说明。按对判断 —— 多屏混排时不同屏对的方式可能不一样。"""
         if not self.perm:
-            return "没有任何屏参与（全部不动）"
+            return T("没有任何屏参与（全部不动）")
         forced = bool(self.scale_var.get())
         n = n_scale = 0
         for s, d in self.perm.items():
@@ -2020,12 +2021,13 @@ class App:
             if forced or (a["width"], a["height"]) != (b["width"], b["height"]):
                 n_scale += 1
         if not n:
-            return "没有任何屏参与（全部不动）"
+            return T("没有任何屏参与（全部不动）")
         if n_scale == 0:
-            return f"{n} 对全为纯平移"
+            return T("{n} 对全为纯平移", n=n)
         if n_scale == n:
-            return f"{n} 对全为等比缩放"
-        return f"{n} 对中 {n_scale} 对缩放、{n - n_scale} 对平移"
+            return T("{n} 对全为等比缩放", n=n)
+        return T("{n} 对中 {n_scale} 对缩放、{n_rest} 对平移",
+                 n=n, n_scale=n_scale, n_rest=n - n_scale)
 
     def _is_involution(self):
         """排列是不是「自逆」的 —— 即作用两次回到原状（对换就是这样）。

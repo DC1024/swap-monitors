@@ -76,6 +76,16 @@ EN_TEXT = {
     "进程": "Process",
     "窗口标题": "Window title",
     "互换后": "Goes to",
+    # 列表行与计数（模板）
+    "屏{n}": "Screen {n}",
+    "（管理员进程）": "(admin process)",
+    "共 {count} 个窗口　·　{desc}": "{count} windows · {desc}",
+    # 映射方式说明（_map_desc 的三条 + 空排列那条）
+    "没有任何屏参与（全部不动）": "No screen involved (keep all)",
+    "{n} 对全为纯平移": "{n} pairs, all move as-is",
+    "{n} 对全为等比缩放": "{n} pairs, all scaled",
+    "{n} 对中 {n_scale} 对缩放、{n_rest} 对平移":
+        "{n_scale} of {n} pairs scaled, {n_rest} move as-is",
 
     # ---- 热键 ----
     "全局热键": "GLOBAL HOTKEY",
