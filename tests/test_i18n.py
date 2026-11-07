@@ -520,13 +520,23 @@ for _lang, _want in (("zh", "多屏窗口互换"), ("en", "Swap Monitors")):
 
 # 名单里刚缩掉 count_lbl / perm_hint，得证明它们**真有字**再被扫 —— 空字符串
 # 在英文模式下天然没有中文，那种绿是假的。
+# ⚠️ 但 CI runner 没有真实显示器：refresh() 会停在「读不到屏幕/窗口信息」，
+# 于是这两个控件就是空的（实测 CI 上 `'' / ''`）。所以「有内容」这半条只能在
+# 枚举得到显示器的机器上验，剩下的机器显式跳过 —— 别把环境差异当 bug 报。
 _r, _a = build_app("en")
 try:
     _dyn = (_a.count_lbl.cget("text"), _a.perm_hint.cget("text"))
+    _n_mon = len(_a.mons)
 finally:
     _r.destroy()
-check(f"英文下计数行 / 排列提示都有实际内容且无中文（{_dyn[0]!r} / {_dyn[1]!r}）",
-      all(bool(t.strip()) and not CJK.search(t) for t in _dyn), str(_dyn))
+check(f"英文下计数行 / 排列提示没有中文（{_dyn[0]!r} / {_dyn[1]!r}）",
+      not any(CJK.search(t) for t in _dyn), str(_dyn))
+if _n_mon:
+    check(f"英文下这两个控件都有实际内容（{_n_mon} 块屏）",
+          all(bool(t.strip()) for t in _dyn), str(_dyn))
+else:
+    print("  ⏭  这台机器枚举不到显示器（计数行本来就是空的），"
+          "跳过「有实际内容」那半条")
 
 I.set_language("zh")
 
