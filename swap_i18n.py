@@ -140,6 +140,97 @@ EN_TEXT = {
     "热键": "hotkey",
     "左键双击显示、右键菜单": "double-click to show, right-click for menu",
 
+    # ---- 状态栏 ----
+    "已请求提权，正在以管理员身份重启…": "Requested elevation, restarting as admin…",
+    "已取消开机自启": "Autostart off",
+    "已设置开机自启：{path}": "Autostart set: {path}",
+    "开机自启已按新位置更新：{path}": "Autostart entry updated to the new path: {path}",
+    "已记住管理员模式：开机与双击都将是管理员（不再弹 UAC）":
+        "Admin mode remembered: starts elevated from now on, no more UAC prompts",
+    "已关闭管理员模式，下次启动恢复为普通权限":
+        "Admin mode off, next launch runs as a normal user",
+    "已取消：未开启管理员模式": "Cancelled: admin mode stays off",
+    "未取得管理员权限，管理员模式未开启": "Elevation failed, admin mode is off",
+    "管理员模式已生效：开机与双击都将是管理员（不再弹 UAC）":
+        "Admin mode active: starts elevated from now on, no more UAC prompts",
+    "管理员模式设置失败（已保持关闭）": "Could not enable admin mode (kept off)",
+    "已重建管理员模式计划任务（之前缺失或已失效）":
+        "Admin task recreated (it was missing or stale)",
+    "计划任务已按程序新位置更新": "Scheduled task updated to the new program path",
+    "上一次操作还在进行中…": "Previous operation still running…",
+    "读取屏幕/窗口信息失败": "Could not read screen/window info",
+    "已刷新": "Refreshed",
+    "预览中…": "Previewing…",
+    "正在互换窗口…": "Swapping windows…",
+    "失败：{err}": "Failed: {err}",
+    "未知错误": "unknown error",
+    "预览完成：{count} 个窗口将被互换（未做任何改动）":
+        "Preview done: {count} windows would move (nothing changed)",
+    "没有需要互换的窗口（当前都在同一块屏上？）":
+        "Nothing to swap (all windows already on one screen?)",
+    "完成：{count} 个窗口已互换": "Done: {count} windows swapped",
+    "（本次没有匹配的窗口）": " (nothing matched this time)",
+    "再按一次热键即可换回": "press the hotkey again to swap back",
+    "这是多屏轮转，继续按热键会一圈一圈地换下去":
+        "this is a rotation, keep pressing and it goes round and round",
+    "{msg}　·　{tail}": "{msg} · {tail}",
+    "已收进托盘": "Minimized to tray",
+    "托盘图标已就绪（收在 ^ 隐藏区里，想常显就拖出来）":
+        "Tray icon ready (it sits in the ^ overflow area, drag it out to keep it visible)",
+    "托盘图标反复挂不上，热键照常可用（可试着重启一下资源管理器）":
+        "Tray icon keeps failing, the hotkey still works (try restarting Explorer)",
+    "托盘图标创建失败（热键仍可用）":
+        "Could not create the tray icon (the hotkey still works)",
+    "界面刷新出了点问题，已记入日志（热键仍可用）":
+        "Something went wrong refreshing the UI, logged to file (the hotkey still works)",
+    "热键触发第 {count} 次，正在互换…": "Hotkey fired ({count}), swapping…",
+    "热键 {hotkey} 已生效，随时按下即可互换；点 X 会收进托盘":
+        "Hotkey {hotkey} is live — press it to swap; X minimizes to tray",
+    "排除标题的正则写错了：{err}": "Bad regex in excluded titles: {err}",
+
+    # ---- 排列预设与撞车提示 ----
+    "只有一块屏，无法轮转": "Only one screen, nothing to rotate",
+    "只有一块屏，无法互换": "Only one screen, nothing to swap",
+    "已设为全部不动": "Set to keep all",
+    "已设为互换最左两块，其余不动": "Set to pair up the two leftmost screens",
+    "已设为环形轮转：{path}": "Set to a ring rotation: {path}",
+    "屏{dst} 已被屏{owner} 选为目标，屏{s} 改为不动":
+        "Screen {dst} is already taken by screen {owner}; screen {s} left unchanged",
+    "⚠ {who} 没有设置去向：它原有的窗口会留在原地，与搬过来的窗口叠在一起":
+        "⚠ {who} has no destination: its windows stay put and end up "
+        "stacked under the ones moved in",
+
+    # ---- 热键 ----
+    "（原来的 {back} 仍在生效）": " (the previous {back} stays active)",
+    "；原来的 {back} 仍在生效": "; the previous {back} stays active",
+    "；当前没有热键可用": "; no hotkey is active",
+    "无法创建托盘/热键窗口": "Could not create the tray/hotkey window",
+    "{combo} 已被其他程序占用（Win32 错误 {err}），换一个组合试试":
+        "{combo} is taken by another program (Win32 error {err}), try another combo",
+    "主键只能有一个：已经写了 {written}，又出现 {again}"
+    "（多出来的那个会被悄悄丢掉，注册的其实是 {written}）":
+        "Only one main key allowed: {written} is already set, {again} appeared too "
+        "(the extra one is dropped — {written} is what gets registered)",
+    "认不出这部分：{parts}（主键只能是字母、数字或 F1–F24）":
+        "Cannot parse: {parts} (the main key must be a letter, a digit or F1–F24)",
+    "必须带上 Ctrl / Alt / Win 之一：只按一个字母会把正常输入全抢走":
+        "Need Ctrl / Alt / Win: a bare letter would swallow normal typing",
+    "必须按住 Ctrl / Alt / Shift / Win 之一": "Hold Ctrl / Alt / Shift / Win",
+    "不支持这个键：{key}": "Unsupported key: {key}",
+
+    # ---- 权限栏 ----
+    "权限：管理员 ✓": "Permissions: admin ✓",
+    "权限：普通用户（已设管理员模式，重启后生效）":
+        "Permissions: normal user (admin mode set, active after restart)",
+    "权限：普通用户（管理员窗口搬不动）":
+        "Permissions: normal user (elevated windows cannot be moved)",
+
+    # ---- 热键状态行 ----
+    "　·　已触发 {count} 次": " · fired {count} times",
+    "　·　托盘已就绪": " · tray ready",
+    "　·　托盘未就绪": " · tray not ready",
+    "{mark} 已注册：{hotkey}{extra}": "{mark} registered: {hotkey}{extra}",
+
     # ---- 标点（当分隔符用，所以也得能翻）----
     "、": ", ",
 }

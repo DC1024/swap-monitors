@@ -456,18 +456,19 @@ def parse_hotkey(spec):
                 continue
             if vk is not None:
                 raise ValueError(
-                    f"主键只能有一个：已经写了 {vk_name}，又出现 {shown}"
-                    f"（多出来的那个会被悄悄丢掉，注册的其实是 {vk_name}）")
+                    T("主键只能有一个：已经写了 {written}，又出现 {again}"
+                      "（多出来的那个会被悄悄丢掉，注册的其实是 {written}）",
+                      written=vk_name, again=shown))
             vk, vk_name = new_vk, shown
             names.append(shown)
     if unknown:
-        raise ValueError(f"认不出这部分：{'、'.join(unknown)}"
-                         f"（主键只能是字母、数字或 F1–F24）")
+        raise ValueError(T("认不出这部分：{parts}（主键只能是字母、数字或 F1–F24）",
+                           parts=T("、").join(unknown)))
     if vk is None:
         raise ValueError("热键里至少要有一个主键，例如 ctrl+alt+s")
     if not mods & (MOD_CONTROL | MOD_ALT | MOD_WIN):
-        raise ValueError("必须带上 Ctrl / Alt / Win 之一："
-                         "只按一个字母会把正常输入全抢走")
+        raise ValueError(T("必须带上 Ctrl / Alt / Win 之一："
+                           "只按一个字母会把正常输入全抢走"))
     return mods, vk, "+".join(names)
 
 
@@ -788,7 +789,7 @@ class TrayThread(threading.Thread):
     def run(self):
         self.hwnd = self._create_window()
         if not self.hwnd:
-            self.results.put(("hk_fail", "无法创建托盘/热键窗口"))
+            self.results.put(("hk_fail", T("无法创建托盘/热键窗口")))
             return
         self.hicon = self._load_icon()
         self._ensure_icon()
@@ -831,7 +832,8 @@ class TrayThread(threading.Thread):
             mods, vk, shown = parse_hotkey(spec)
         except ValueError as e:
             back = self._restore_hotkey(old_spec, old_shown)
-            self.results.put(("hk_fail", str(e) + (f"（原来的 {back} 仍在生效）" if back else "")))
+            self.results.put(("hk_fail", str(e) + (
+                T("（原来的 {back} 仍在生效）", back=back) if back else "")))
             return
         if u32.RegisterHotKey(self.hwnd, 1, mods | MOD_NOREPEAT, vk):
             self._spec = spec
@@ -841,10 +843,11 @@ class TrayThread(threading.Thread):
         else:
             err = ctypes.get_last_error()
             back = self._restore_hotkey(old_spec, old_shown)
-            self.results.put(("hk_fail", f"{shown} 已被其他程序占用（Win32 错误 {err}），"
-                                        f"换一个组合试试"
-                                        + (f"；原来的 {back} 仍在生效" if back
-                                           else "；当前没有热键可用")))
+            self.results.put(("hk_fail", T(
+                "{combo} 已被其他程序占用（Win32 错误 {err}），换一个组合试试",
+                combo=shown, err=err)
+                + (T("；原来的 {back} 仍在生效", back=back) if back
+                   else T("；当前没有热键可用"))))
 
     def _restore_hotkey(self, spec, shown):
         """把之前那个热键重新注册回去；返回实际生效的显示名（没有就是空串）。"""
@@ -1453,7 +1456,8 @@ class App:
     def _autostart_selfheal(self):
         try:
             if sync_autostart_if_moved():
-                self.set_status(f"开机自启已按新位置更新：{_ascii_path(_autostart_exe())}")
+                self.set_status(T("开机自启已按新位置更新：{path}",
+                                 path=_ascii_path(_autostart_exe())))
         except Exception:
             pass
 
@@ -1720,7 +1724,7 @@ class App:
                 if e.state & mask:
                     mods |= m
             if mods == 0:
-                lb.configure(text="必须按住 Ctrl / Alt / Shift / Win 之一")
+                lb.configure(text=T("必须按住 Ctrl / Alt / Shift / Win 之一"))
                 return
             key = (e.keysym or "").lower()
             if key in ("control_l", "control_r", "alt_l", "alt_r", "shift_l",
@@ -1733,7 +1737,7 @@ class App:
             elif key.startswith("f") and key[1:].isdigit():
                 vk = VK_F1 + int(key[1:]) - 1
             else:
-                lb.configure(text=f"不支持这个键：{e.keysym}")
+                lb.configure(text=T("不支持这个键：{key}", key=e.keysym))
                 return
             parts = [n for m, n in names.items() if mods & m]
             spec = "+".join(parts + [key if len(key) == 1 else key.upper()])
@@ -1759,21 +1763,22 @@ class App:
             self.start_hotkey()
         else:
             self.hk.set_hotkey(spec)
-        self.hk_state.configure(text="正在注册…", foreground=C_DIM)
+        self.hk_state.configure(text=T("正在注册…"), foreground=C_DIM)
 
     # ---------- 权限（UAC 提权） ----------
     def update_perm_label(self):
         if is_elevated():
-            self.perm_lbl.configure(text="权限：管理员 ✓", foreground=C_OK)
+            self.perm_lbl.configure(text=T("权限：管理员 ✓"), foreground=C_OK)
             try:
                 self.elev_btn.configure(state="disabled")
             except Exception:
                 pass
         elif self.cfg.get("run_as_admin"):
-            self.perm_lbl.configure(text="权限：普通用户（已设管理员模式，重启后生效）",
-                                    foreground=C_WARN)
+            self.perm_lbl.configure(
+                text=T("权限：普通用户（已设管理员模式，重启后生效）"),
+                foreground=C_WARN)
         else:
-            self.perm_lbl.configure(text="权限：普通用户（管理员窗口搬不动）",
+            self.perm_lbl.configure(text=T("权限：普通用户（管理员窗口搬不动）"),
                                     foreground=C_WARN)
 
     def elevate(self):
@@ -1789,7 +1794,7 @@ class App:
         # 把单实例互斥体让出去：提权后的新实例和本进程是两份，不让位它会被守卫挡回去。
         _release_single_instance()
         if relaunch_as_admin():
-            self.set_status("已请求提权，正在以管理员身份重启…")
+            self.set_status(T("已请求提权，正在以管理员身份重启…"))
             self.root.after(250, self._exit_now)
         else:
             _acquire_single_instance()   # 提权没成功，互斥体得收回来
@@ -1817,11 +1822,11 @@ class App:
                 os.makedirs(STARTUP_DIR, exist_ok=True)
                 # 幂等：不管之前是什么内容，一律按当前 exe 的真实位置重写一次
                 _write_ascii_file(AUTOSTART_CMD, _autostart_cmd_text())
-                self.set_status(f"已设置开机自启：{AUTOSTART_CMD}")
+                self.set_status(T("已设置开机自启：{path}", path=AUTOSTART_CMD))
             else:
                 if os.path.exists(AUTOSTART_CMD):
                     os.remove(AUTOSTART_CMD)
-                self.set_status("已取消开机自启")
+                self.set_status(T("已取消开机自启"))
         except Exception as e:  # noqa: BLE001
             messagebox.showwarning(APP_TITLE, f"修改开机自启失败：{e}", parent=self.root)
 
@@ -1850,7 +1855,7 @@ class App:
                 self.auto_var.set(False)
                 self.cfg["autostart"] = False
                 self._save()
-                self.set_status("已记住管理员模式：开机与双击都将是管理员（不再弹 UAC）")
+                self.set_status(T("已记住管理员模式：开机与双击都将是管理员（不再弹 UAC）"))
                 self.update_perm_label()
             else:
                 self.admin_var.set(False)
@@ -1872,7 +1877,7 @@ class App:
                                        f"删除计划任务失败：{out.strip()[:200]}",
                                        parent=self.root)
                 return
-        self.set_status("已关闭管理员模式，下次启动恢复为普通权限")
+        self.set_status(T("已关闭管理员模式，下次启动恢复为普通权限"))
 
     def _remove_startup_cmd(self):
         try:
@@ -1890,7 +1895,7 @@ class App:
                 "现在以管理员身份重启一次来完成设置吗？\n"
                 "（这次会弹一次 UAC，之后启动就再也不弹了）",
                 parent=self.root):
-            self.set_status("已取消：未开启管理员模式")
+            self.set_status(T("已取消：未开启管理员模式"))
             return False
         # 标记"本次提权是为了落实管理员模式"，提权后的实例凭它自动补建任务。
         # 必须写进 cfg（会被 _save 落盘）—— 提权重启是**新进程**，配置从磁盘读；
@@ -1926,7 +1931,7 @@ class App:
                 self.admin_var.set(False)
                 self.cfg["run_as_admin"] = False
                 self._save()
-                self.set_status("未取得管理员权限，管理员模式未开启")
+                self.set_status(T("未取得管理员权限，管理员模式未开启"))
                 return
             ok, out = create_elevated_task()
             if ok:
@@ -1939,12 +1944,12 @@ class App:
                 self.cfg["autostart"] = False
                 self._save()
                 self.update_perm_label()
-                self.set_status("管理员模式已生效：开机与双击都将是管理员（不再弹 UAC）")
+                self.set_status(T("管理员模式已生效：开机与双击都将是管理员（不再弹 UAC）"))
             else:
                 self.admin_var.set(False)
                 self.cfg["run_as_admin"] = False
                 self._save()
-                self.set_status("管理员模式设置失败（已保持关闭）")
+                self.set_status(T("管理员模式设置失败（已保持关闭）"))
                 messagebox.showwarning(
                     APP_TITLE,
                     "创建「最高权限」计划任务失败，管理员模式没有开启。\n\n"
@@ -1962,9 +1967,9 @@ class App:
                         self.auto_var.set(False)
                         self.cfg["autostart"] = False
                         self._save()
-                        self.set_status("已重建管理员模式计划任务（之前缺失或已失效）")
+                        self.set_status(T("已重建管理员模式计划任务（之前缺失或已失效）"))
             elif sync_task_if_moved():
-                self.set_status("计划任务已按程序新位置更新")
+                self.set_status(T("计划任务已按程序新位置更新"))
         else:
             if task_exists() and is_elevated():
                 delete_elevated_task()
@@ -1975,13 +1980,13 @@ class App:
             # 互换正在进行：这会儿读到的窗口位置本来就在变，刷出来是错的；
             # 更麻烦的是 run_with_args 里的 redirect_stdout 是**进程级**的，
             # 主线程这会儿进去会把 worker 的 JSON 抢到自己缓冲区（见 run_with_args）。
-            self.set_status("上一次操作还在进行中…")
+            self.set_status(T("上一次操作还在进行中…"))
             return None
         ns = self._make_args()
         ns.list = True
         data = run_with_args(ns)
         if not data or not data.get("ok"):
-            self.set_status("读取屏幕/窗口信息失败")
+            self.set_status(T("读取屏幕/窗口信息失败"))
             return
         self.mons = data.get("monitors", [])
         self.wins = data.get("windows", [])
@@ -2002,7 +2007,7 @@ class App:
                 tags=("odd",) if i % 2 else ())
         self.count_lbl.configure(text=T("共 {count} 个窗口　·　{desc}",
                                         count=len(self.wins), desc=self._map_desc()))
-        self.set_status("已刷新")
+        self.set_status(T("已刷新"))
         return data
 
     # ---------- 排列编辑器 ----------
@@ -2053,9 +2058,9 @@ class App:
                         if isinstance(d, int) and 1 <= d <= n and d not in perm})
         if not stuck:
             return ""
-        who = "、".join(f"屏{d}" for d in stuck)
-        return (f"⚠ {who} 没有设置去向：它原有的窗口会留在原地，"
-                f"与搬过来的窗口叠在一起")
+        who = T("、").join(T("屏{n}", n=d) for d in stuck)
+        return T("⚠ {who} 没有设置去向：它原有的窗口会留在原地，"
+                 "与搬过来的窗口叠在一起", who=who)
 
     def _set_stack_hint(self, text):
         """显示/收起提醒条。用标志位而不是 winfo_ismapped()：窗口还没 map 时
@@ -2187,7 +2192,8 @@ class App:
                 continue             # 但配置可能被手改坏，兜一下免得把自环送给引擎
             owner = next((k for k, v in final.items() if v == d), None)
             if owner is not None:
-                note = f"屏{d} 已被屏{owner} 选为目标，屏{s} 改为不动"
+                note = T("屏{dst} 已被屏{owner} 选为目标，屏{s} 改为不动",
+                         dst=d, owner=owner, s=s)
                 continue
             final[s] = d
         self.perm = final
@@ -2216,19 +2222,21 @@ class App:
     def preset_rotate(self):
         n = len(self.mons)
         if n < 2:
-            self.set_status("只有一块屏，无法轮转")
+            self.set_status(T("只有一块屏，无法轮转"))
             return
+        ring = "→".join([T("屏{n}", n=i + 1) for i in range(n)]
+                        + [T("屏{n}", n=1)])
         self._apply_perm({i + 1: (i + 1) % n + 1 for i in range(n)},
-                         "已设为环形轮转：" + "→".join(f"屏{i + 1}" for i in range(n)) + "→屏1")
+                         T("已设为环形轮转：{path}", path=ring))
 
     def preset_pair(self):
         if len(self.mons) < 2:
-            self.set_status("只有一块屏，无法互换")
+            self.set_status(T("只有一块屏，无法互换"))
             return
-        self._apply_perm({1: 2, 2: 1}, "已设为互换最左两块，其余不动")
+        self._apply_perm({1: 2, 2: 1}, T("已设为互换最左两块，其余不动"))
 
     def preset_none(self):
-        self._apply_perm({}, "已设为全部不动")
+        self._apply_perm({}, T("已设为全部不动"))
 
     def _make_args(self, dry=False):
         class A:
@@ -2259,10 +2267,10 @@ class App:
     # ---------- 执行 ----------
     def do_swap(self, dry=False):
         if self.busy:
-            self.set_status("上一次操作还在进行中…")
+            self.set_status(T("上一次操作还在进行中…"))
             return
         self.busy = True
-        self.set_status("预览中…" if dry else "正在互换窗口…")
+        self.set_status(T("预览中…") if dry else T("正在互换窗口…"))
 
         def work():
             try:
@@ -2277,8 +2285,8 @@ class App:
         self.busy = False
         data = data or {}
         if not data.get("ok"):
-            errs = data.get("errors") or ["未知错误"]
-            self.set_status(f"失败：{errs[0]}")
+            errs = data.get("errors") or [T("未知错误")]
+            self.set_status(T("失败：{err}", err=errs[0]))
             denied = data.get("denied", 0)
             if dry:
                 return
@@ -2313,18 +2321,20 @@ class App:
                 if p:
                     r = p["to"]
                     self.tree.set(item, "to", f"{p['direction']} → {r['left']},{r['top']}")
-            self.set_status(f"预览完成：{len(plan)} 个窗口将被互换（未做任何改动）"
-                            if plan else "没有需要互换的窗口（当前都在同一块屏上？）")
+            self.set_status(
+                T("预览完成：{count} 个窗口将被互换（未做任何改动）", count=len(plan))
+                if plan else T("没有需要互换的窗口（当前都在同一块屏上？）"))
             return
 
         moved = data.get("moved", 0)
         self.refresh()          # 注意顺序：refresh 会写状态栏，完成提示要放在它后面
-        msg = f"完成：{moved} 个窗口已互换" + ("（本次没有匹配的窗口）" if not moved else "")
+        msg = T("完成：{count} 个窗口已互换", count=moved) + (
+            T("（本次没有匹配的窗口）") if not moved else "")
         # 只有「对换」（排列是自逆的，作用两次回到原状）才谈得上「再按一次换回」；
         # 三屏轮转要按满一圈才复位，说「再按一次换回」是错的
-        tail = ("再按一次热键即可换回" if self._is_involution()
-                else "这是多屏轮转，继续按热键会一圈一圈地换下去")
-        self.set_status(f"{msg}　·　{tail}")
+        tail = (T("再按一次热键即可换回") if self._is_involution()
+                else T("这是多屏轮转，继续按热键会一圈一圈地换下去"))
+        self.set_status(T("{msg}　·　{tail}", msg=msg, tail=tail))
         if self.hidden and self.hk and self.notify_var.get():
             self.hk.notify(APP_TITLE, f"{msg}\n{tail}")
 
@@ -2397,7 +2407,7 @@ class App:
         # 处境又往反方向推了一把。现在只有配置里明确要了才写。
         if self.hk and self.cfg.get("promote_tray_icon"):
             self.hk.promote_icon()
-        self.set_status("托盘图标已就绪（收在 ^ 隐藏区里，想常显就拖出来）")
+        self.set_status(T("托盘图标已就绪（收在 ^ 隐藏区里，想常显就拖出来）"))
         # 只有**真的展示出去**了才算提示过。失败（比如弹窗那步抛异常）就留着机会，
         # 等下一次 tray_ok（explorer 重启重挂图标时还会再来一次）再试。
         if self._overflow_hint(
@@ -2453,14 +2463,14 @@ class App:
                     self._tray_reinit_left -= 1
                     self.hk.reinit_tray()
                     if not self._tray_reinit_left:
-                        self.set_status("托盘图标反复挂不上，热键照常可用（可试着重启一下资源管理器）")
+                        self.set_status(T("托盘图标反复挂不上，热键照常可用（可试着重启一下资源管理器）"))
         try:
             while True:
                 ev, val = self.q.get_nowait()
                 if ev == "hotkey":
                     self.hk_count += 1
                     self._hk_label(ok=True)
-                    self.set_status(f"热键触发第 {self.hk_count} 次，正在互换…")
+                    self.set_status(T("热键触发第 {count} 次，正在互换…", count=self.hk_count))
                     self.do_swap()
                 elif ev == "hk_ok":
                     # 只有这里才把热键写进配置：注册成功 = 这个组合真的能用。
@@ -2469,12 +2479,13 @@ class App:
                         self.cfg["hotkey"] = _spec
                         self._save()
                     self._hk_label(ok=True)
-                    self.set_status(f"热键 {self.hk_shown} 已生效，随时按下即可互换；点 X 会收进托盘")
+                    self.set_status(T("热键 {hotkey} 已生效，随时按下即可互换；点 X 会收进托盘",
+                                     hotkey=self.hk_shown))
                 elif ev == "tray_ok":
                     self.tray_ok = bool(val)
                     self._hk_label(ok=True)
                     if not val:
-                        self.set_status("托盘图标创建失败（热键仍可用）")
+                        self.set_status(T("托盘图标创建失败（热键仍可用）"))
                     else:
                         self._maybe_hint_overflow()
                 elif ev == "tray_reinit":
@@ -2509,15 +2520,17 @@ class App:
             sw.log_error(f"界面心跳出错（第 {self._poll_errors} 次）：\n"
                          + traceback.format_exc())
         if self._poll_errors == 1:
-            self.set_status("界面刷新出了点问题，已记入日志（热键仍可用）")
+            self.set_status(T("界面刷新出了点问题，已记入日志（热键仍可用）"))
 
     def _hk_label(self, ok=True):
         extra = ""
         if self.hk_count:
-            extra += f"　·　已触发 {self.hk_count} 次"
-        extra += "　·　托盘已就绪" if self.tray_ok else "　·　托盘未就绪"
-        self.hk_state.configure(text=f"{'✓' if ok else '✗'} 已注册：{self.hk_shown}{extra}",
-                                foreground=C_OK if ok else C_WARN)
+            extra += T("　·　已触发 {count} 次", count=self.hk_count)
+        extra += T("　·　托盘已就绪") if self.tray_ok else T("　·　托盘未就绪")
+        self.hk_state.configure(
+            text=T("{mark} 已注册：{hotkey}{extra}", mark="✓" if ok else "✗",
+                   hotkey=self.hk_shown, extra=extra),
+            foreground=C_OK if ok else C_WARN)
 
     def set_status(self, text):
         self.status.configure(text=text)
@@ -2539,7 +2552,7 @@ class App:
             msg = (f"「排除的窗口标题」这段正则写错了：\n\n{e}\n\n"
                    f"收到的是：{pat}\n\n"
                    f"已经保留上一次能用的值，改对之后才会生效。")
-            self.set_status(f"排除标题的正则写错了：{e}")
+            self.set_status(T("排除标题的正则写错了：{err}", err=e))
             try:
                 messagebox.showwarning(APP_TITLE, msg, parent=self.root)
             except Exception:                    # noqa: BLE001
@@ -2618,7 +2631,7 @@ class App:
         self._save()
         self.root.withdraw()
         self.hidden = True
-        self.set_status("已收进托盘")
+        self.set_status(T("已收进托盘"))
         if not self.tray_hint_shown:
             self.tray_hint_shown = True
             if self.hk:

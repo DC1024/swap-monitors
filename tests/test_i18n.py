@@ -15,6 +15,7 @@
 
 用法: python tests/test_i18n.py
 """
+import ast
 import json
 import os
 import re
@@ -168,9 +169,23 @@ CJK = re.compile(r"[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff"
                  r"\uf900-\ufaff\uff00-\uffef]")
 
 
-def stray_keys(table, src):
+def string_constants(path):
+    """源码里所有字符串字面量的值（ast 会把相邻的 "a" "b" 自动拼成 "ab"）。
+
+    为什么不用 `k in src`（第一版就是那个写法）：长句子拆成两行写时，源码里
+    **根本拼不出**完整的 key —— B3c 加的三条就是这样，④ 直接报「找不到」。
+    ast 取到的是拼接后的值，正好是运行时真正的 key。
+    顺带还治了另一个漏：注释里出现过同样的字，`in src` 会假通过。
+    """
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), path)
+    return {n.value for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+
+
+def stray_keys(table, texts):
     """表里「源码中根本没出现过」的键 —— 一个字打错就等于这一句白翻。"""
-    return sorted(k for k in table if k not in src)
+    return sorted(k for k in table if k not in texts)
 
 
 def untranslated(table):
@@ -211,7 +226,8 @@ def bad_placeholders(table):
     return bad
 
 
-_SRC_ALL = GUI_SRC + WIN_SRC
+_SRC_ALL = string_constants(os.path.join(ROOT, "swap_gui.py")) \
+    | string_constants(os.path.join(ROOT, "swap_windows.py"))
 
 _stray = stray_keys(I.EN_TEXT, _SRC_ALL)
 check(f"表里 {len(I.EN_TEXT)} 个键都能在源码里找到原文", not _stray,
@@ -238,6 +254,15 @@ _FAKE = {
 check("反向：打错字的键被拎出来",
       stray_keys(_FAKE, _SRC_ALL) == ["这段源码里根本没有"],
       str(stray_keys(_FAKE, _SRC_ALL)))
+
+# AST 版比 `k in src` 强的第二点：注释里出现过同样的字**不算**找到。
+# （第一点在上面的函数说明里：拆成两行的长句子只有 ast 才拼得回来）
+_cpath = os.path.join(TMP, "comment_only.py")
+with open(_cpath, "w", encoding="utf-8") as f:
+    f.write("# 只在注释里的句子\nx = 1\n")
+check("反向：只在注释里出现的句子不算「源码里有」",
+      stray_keys({"只在注释里的句子": "x"}, string_constants(_cpath))
+      == ["只在注释里的句子"])
 check("反向：漏翻 / 没翻 / 填空的译文被拎出来（3 条）",
       sorted(k for k, _v in untranslated(_FAKE)) == sorted(["应用", "退出", "刷新"]),
       str(sorted(k for k, _v in untranslated(_FAKE))))
@@ -266,7 +291,6 @@ check("纯英文译文不触发 CJK 规则",
 # 这是模板机制真正的入口守卫：`T(f"共 {n} 个窗口")` 语法上合法、中文下看着也对，
 # 但 key 是「共 3 个窗口」「共 12 个窗口」……每种取值都是一条新词条，
 # 表里永远填不满，而英文界面下这些句子**永远是中文**，还查不出原因。
-import ast                                                  # noqa: E402
 
 
 def fstring_keys(path):
@@ -311,6 +335,91 @@ with open(_okpath, "w", encoding="utf-8") as f:
 check("反向：条件表达式当参数不被误伤", fstring_keys(_okpath) == [],
       str(fstring_keys(_okpath)))
 
+# ------------------------------------------------------------
+# ④c  模板 key 与调用时传的参数必须对上
+# T("完成：{count} 个窗口已互换") 少写 count= 时不会抛 —— 它退回原文再格式化，
+# 还是失败，最后原样返回，界面上就冒出 `完成：{count} 个窗口已互换`。
+# ④ 只比对「原文 vs 译文」，管不到调用点；这里补上。
+
+
+def t_call_arg_mismatch(path):
+    """返回 [(行号, 模板要的参数, 实际传的参数)]：T() 调用点参数对不上的。"""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), path)
+    bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        fn = node.func
+        name = (fn.id if isinstance(fn, ast.Name)
+                else fn.attr if isinstance(fn, ast.Attribute) else "")
+        if name != "T":
+            continue
+        first = node.args[0]
+        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+            continue                  # 变量/条件表达式当 key，静态看不出来
+        want = fields(first.value)
+        got = {kw.arg for kw in node.keywords}
+        if want != got:
+            bad.append((node.lineno, sorted(want or ()), sorted(got)))
+    return bad
+
+
+for _p in ("swap_gui.py", "swap_windows.py"):
+    _bad = t_call_arg_mismatch(os.path.join(ROOT, _p))
+    check(f"{_p} 里每个 T() 调用都传了模板要的全部参数", not _bad,
+          "; ".join(f"L{n}: 要 {w} 传 {g}" for n, w, g in _bad[:3]))
+
+_mis = os.path.join(TMP, "bad_t_args.py")
+with open(_mis, "w", encoding="utf-8") as f:
+    f.write("def g(n, m):\n"
+            "    a = T(\"完成：{count} 个窗口已互换\")      # 少传 count\n"
+            "    b = T(\"共 {n} 个\", n=n)                 # 正常\n"
+            "    c = T(\"共 {n} 个\", n=n, extra=m)        # 多传\n")
+check("反向：少传 / 多传参数都被拎出来（2 条）",
+      [ln for ln, _w, _g in t_call_arg_mismatch(_mis)] == [2, 4],
+      str(t_call_arg_mismatch(_mis)))
+
+# ------------------------------------------------------------
+# ④d  源码里 T("中文…") 的每个 key 都得在表里有译文
+# ④ 是「表 → 源码」方向（表里的键在源码里找得到吗），这条是反方向
+# （源码里的键在表里有译文吗）。少一条的表现就是：切到英文后那一句还是中文，
+# 而 ⑦ 的审计只覆盖建窗那一刻看得见的控件，跑在回调里的句子它扫不到。
+
+
+def t_cjk_keys(path):
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), path)
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        fn = node.func
+        name = (fn.id if isinstance(fn, ast.Name)
+                else fn.attr if isinstance(fn, ast.Attribute) else "")
+        if name != "T":
+            continue
+        a = node.args[0]
+        if isinstance(a, ast.Constant) and isinstance(a.value, str) \
+                and CJK.search(a.value):
+            out.add(a.value)
+    return out
+
+
+for _p in ("swap_gui.py", "swap_windows.py"):
+    _keys = t_cjk_keys(os.path.join(ROOT, _p))
+    _missing = sorted(k for k in _keys if k not in I.EN_TEXT)
+    check(f"{_p} 里 {len(_keys)} 条 T(\"中文…\") 都有英文译文", not _missing,
+          "缺: " + ", ".join(_missing[:5]))
+
+# 反向验证：拿一张少一条的表，必须点名缺的那条
+_short = {k: v for k, v in I.EN_TEXT.items() if k != "已刷新"}
+check("反向：表里少一条就被点名",
+      sorted(k for k in t_cjk_keys(os.path.join(ROOT, "swap_gui.py"))
+             if k not in _short) == ["已刷新"],
+      str(sorted(k for k in t_cjk_keys(os.path.join(ROOT, "swap_gui.py"))
+                 if k not in _short)))
+
 # ============================================================
 section("⑤ lang 配置项：默认中文、脏值不崩")
 
@@ -350,7 +459,6 @@ section("⑥ App / main 真的是在建界面之前读的 lang")
 # 把 `apply_language(self.cfg)` 注释掉（`# apply_language(self.cfg)`）
 # 它还是一条不落地算通过。这里要的是「真的会执行的调用」，只有语法树分得清
 # 注释和代码。
-import ast                                          # noqa: E402
 
 _TREE = ast.parse(GUI_SRC, "swap_gui.py")
 
@@ -441,8 +549,9 @@ section("⑦ 界面上真的没有漏翻的中文（中英各建一次窗）")
 import tkinter as tk                              # noqa: E402
 
 # 这些控件的文字是**运行时才定**的（窗口数、注册状态、当前排列说明……）。
-# 名单里每减一项，都是那批的工作量：B3a 已经翻掉 count_lbl 和 perm_hint。
-DYNAMIC = ("perm_lbl", "perm_warn", "hk_state", "status")
+# B3a～B3c 之后**一个都不剩了** —— 名单空了本身就是进度条：谁再往里加名字，
+# 都要先想清楚「这一句是不是又漏翻了」。
+DYNAMIC = ()
 
 
 def build_app(lang):
