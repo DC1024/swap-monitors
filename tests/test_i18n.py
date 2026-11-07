@@ -483,8 +483,8 @@ def audit(lang):
     root, app = build_app(lang)
     try:
         skip = {id(getattr(app, n)) for n in DYNAMIC if hasattr(app, n)}
-        skip |= subtree_ids(app.cards)          # 卡片里的「屏1 / 送往」也是动态的
         skip |= subtree_ids(app.perm_warn_box)  # 提醒条同理
+        # 排列卡片已经翻完了（B3b），不再整块跳过 —— 少跳一块就多一份覆盖
         widgets = [w for w in walk(root) if id(w) not in skip]
         bad = cjk_texts(widgets)
         heads = [app.tree.heading(c, "text")

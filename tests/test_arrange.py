@@ -214,6 +214,12 @@ def main():
     app._sync_cards()
     check("英文下提示是「Screen 1 → Screen 2」",
           app.perm_hint.cget("text"), "Screen 1 → Screen 2")
+    # 下拉项是 Combobox 的 values，⑦ 那种遍历控件 text 的审计扫不到，单独验
+    check("英文下卡片下拉项也翻了",
+          list(app.card_widgets[0]["combo"].cget("values")),
+          ["None", "Screen 2", "Screen 3"])
+    check("英文下卡片标题没有全角空格（那是漏翻的痕迹）",
+          "\u3000" in app.card_widgets[0]["tag"].cget("text"), False)
     app._apply_perm({1: 2, 2: 3}, "test")   # 多个映射：顺带验分隔符也翻了
     app.mons = [fake_mon(0, -2560), fake_mon(1, 0, primary=True), fake_mon(2, 5120)]
     app._perm_n = None

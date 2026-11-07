@@ -66,6 +66,14 @@ EN_TEXT = {
     "屏{src}→屏{dst}": "Screen {src} → Screen {dst}",
     "全部不动：按热键不会有任何窗口被移动":
         "Keep all: the hotkey moves nothing",
+    # 排列卡片
+    "送往": "To",
+    "不动": "None",
+    "{mark}　{dev}{star}": "{mark} {dev}{star}",
+    "　★主屏": " ★ main",
+    "{w}×{h}　　左 {left}, 上 {top}": "{w}×{h}    left {left}, top {top}",
+    "　→　送往 {to}": "  →  to {to}",
+    "　→　不动（不参与）": "  →  none (not involved)",
 
     # ---- 窗口清单 ----
     "参与互换的窗口": "WINDOWS TO SWAP",

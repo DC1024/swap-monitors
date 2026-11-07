@@ -34,6 +34,8 @@ APP_TITLE = "多屏窗口互换"
 APP_VER = "1.1.9"   # 1.1.9：托盘图标不再主动「固定到任务栏」（详见 README 对应小节）
 # 排列卡片下拉框里「不参与」那一项的文字。语义上它对应 0 号屏（= 不动），
 # 但两者是分开的：0 是数据，这句话是显示，翻成什么语言都不影响取值。
+# ⚠️ 这里是**词条 key**，不要直接拿去显示 —— 用的时候写 T(LABEL_NONE)，
+# 否则会把 import 那一刻的语言（永远是默认的中文）冻结进常量里。
 LABEL_NONE = "不动"
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
@@ -2111,7 +2113,7 @@ class App:
                 info.pack(anchor="w", pady=(3, 0))
                 r = ttk.Frame(f, style="Card.TFrame")
                 r.pack(fill="x", pady=(9, 0))
-                ttk.Label(r, text="送往", style="Dim.TLabel").pack(side="left")
+                ttk.Label(r, text=T("送往"), style="Dim.TLabel").pack(side="left")
                 var = tk.StringVar()
                 cb = ttk.Combobox(r, textvariable=var, state="readonly", width=10,
                                   font=(FONT, 9))
@@ -2125,24 +2127,29 @@ class App:
         for i, cw in enumerate(self.card_widgets):
             m = self.mons[i]
             mark = self.MARKS[i] if i < len(self.MARKS) else f"({i + 1})"
-            star = "　★主屏" if m["primary"] else ""
+            star = T("　★主屏") if m["primary"] else ""
             dev = m["device"].split("\\")[-1]
             dest = self.perm.get(i + 1)
-            cw["tag"].configure(text=f"{mark}　{dev}{star}")
+            # 整行当模板：中文用全角空格对开，英文换成普通空格（全角空格在英文
+            # 界面里就是「漏翻的痕迹」，⑦ 的审计会把它当中文抓出来）
+            cw["tag"].configure(text=T("{mark}　{dev}{star}",
+                                       mark=mark, dev=dev, star=star))
+            info = T("{w}×{h}　　左 {left}, 上 {top}",
+                     w=m["width"], h=m["height"], left=m["left"], top=m["top"])
             cw["info"].configure(
-                text=f"{m['width']}×{m['height']}　　左 {m['left']}, 上 {m['top']}"
-                     + (f"　→　送往 屏{dest}" if dest else "　→　不动（不参与）"))
+                text=info + (T("　→　送往 {to}", to=T("屏{n}", n=dest)) if dest
+                             else T("　→　不动（不参与）")))
             # 下拉的「显示文字」和「屏号」在这里一起定下来，屏号**单独存**在 nums 里。
             # 老代码是从显示文字里抠数字（`v.startswith("屏")` + `int(v[1:])`），
             # 那样显示文字就成了语义的一部分：文案一变（比如界面切成英文，
             # 变成 "Screen 2"），判定为假 → 整段跳过 → 不报错、不写配置，
             # 用户看到的就是「改了下拉没反应」。分开存之后文字随便改。
-            opts = [(LABEL_NONE, 0)] + [(f"屏{j + 1}", j + 1)
-                                        for j in range(n) if j != i]
+            opts = [(T(LABEL_NONE), 0)] + [(T("屏{n}", n=j + 1), j + 1)
+                                           for j in range(n) if j != i]
             cw["nums"] = [num for _label, num in opts]
             cw["combo"].configure(values=[label for label, _num in opts])
             cw["var"].set(next((lb for lb, num in opts if num == (dest or 0)),
-                               LABEL_NONE))
+                               T(LABEL_NONE)))
 
         # 屏号走模板参数（`屏{src}→屏{dst}`），别用 f-string —— 那样每种屏号
         # 组合都会变成一条新词条。顿号同理：英文里该是逗号，它自己也是一条词条。
