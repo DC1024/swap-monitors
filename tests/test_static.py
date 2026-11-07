@@ -230,6 +230,7 @@ for name in FILES:
 
 # ============================================================
 section("⑥ 默认跳过名单不误伤正常窗口（任务管理器曾是受害者）")
+import swap_i18n as I                                   # noqa: E402
 import swap_windows as SW                               # noqa: E402
 
 # v1.0 首版把 `Task Manager|任务管理器` 写进了 DEFAULT_SKIP_TITLE，
@@ -323,6 +324,104 @@ check("_card_choice 不再从显示文字里抠数字",
 check("同一份代码里 values 与 nums 是两个分开的来源",
       'cw["nums"] = [num for _label, num in opts]' in _src_gui
       and "values=[label for label, _num in opts]" in _src_gui)
+
+# ============================================================
+section("⑨ 「权限不足」的判定不许拿显示文字做字符串匹配（B6 回归）")
+# 踩过的坑：swap() 原来写 `if "拒绝访问" in note or w.proc is None`，
+# 用 move_window 返回的那句**给人看的说明**判断「是不是权限不够」。
+# 界面一切成英文，note 就不是那四个字了 —— 而 `in` 判断**不报错**，
+# 只是恒为假：用户照样看到「部分窗口未能互换」，却再也看不到
+# 「要不要以管理员身份重启」那一步，等于把一个功能悄悄关掉。
+# 这和 ⑧ 的下拉框是同一类错：拿显示文字当语义用。
+#
+# 修法是把「为什么失败」和「怎么告诉用户」拆开：why 是机器可读的常量
+# （WHY_DENIED 等，永不翻译），note 只负责好看。下面的守卫锁住这件事。
+_src_sw_full = open(os.path.join(ROOT, "swap_windows.py"), encoding="utf-8").read()
+_swap_body = _src_sw_full[_src_sw_full.index("def swap(args):")
+                          :_src_sw_full.index("def _harden_console")]
+
+check("swap() 用 move_window_detail 拿 why",
+      "move_window_detail(" in _swap_body, _swap_body[:200])
+check("「权限不足」判定走 why == WHY_DENIED，不再匹配 note 里的字",
+      "why == WHY_DENIED" in _swap_body, _swap_body[:400])
+check("swap() 里没有 `\"拒绝访问\" in note` 这种判定",
+      '"拒绝访问" in note' not in _swap_body
+      and "拒绝访问' in note" not in _swap_body)
+
+# WHY_* 这一组必须是**常量**、且值里不能带中文 —— 否则它自己又变成了
+# 一份要翻译的文案，等于绕了一圈回到原处。
+for _k in ("WHY_DENIED", "WHY_PLACEMENT", "WHY_SETPOS", "WHY_NOCHANGE",
+           "WHY_MAXIMIZED"):
+    check(f"{_k} 定义了", f"{_k} = " in _src_sw_full)
+_why_vals = re.findall(r'^WHY_\w+ = "([^"]*)"', _src_sw_full, re.M)
+check(f"{len(_why_vals)} 个 WHY_* 的值里都没有中文（机器可读，永不翻译）",
+      _why_vals and not any(_CJK.search(v) for v in _why_vals), str(_why_vals))
+
+# 反向验证：把老写法塞回去，检测器必须变红。
+# 不这么做的话，上面那三条只是「恰好现在没写」—— 哪天有人图省事改回去，
+# 它们照样绿（因为 `"拒绝访问" in note` 只出现在新加的注释里也会被判为假阴性）。
+_bad_swap = os.path.join(TMP, "bad_swap_denied.py")
+with open(_bad_swap, "w", encoding="utf-8") as f:
+    f.write('def swap(args):\n'
+            '    note = "x"\n'
+            '    if "拒绝访问" in note or w.proc is None:\n'
+            '        denied += 1\n'
+            '    return 0\n'
+            'def _harden_console():\n'
+            '    pass\n')
+_bad_body = open(_bad_swap, encoding="utf-8").read()
+_bad_body = _bad_body[:_bad_body.index("def _harden_console")]
+check("反向验证：老写法 `\"拒绝访问\" in note` 会被点名",
+      '"拒绝访问" in note' in _bad_body and "why == WHY_DENIED" not in _bad_body)
+
+# move_window 必须是 move_window_detail 的薄壳（保留二元组返回值给老调用方），
+# 而 detail 才是真正干活的那个。
+_mw = inspect.getsource(SW.move_window)
+check("move_window 仍然是 (ok, note) 二元组（老调用方不受影响）",
+      "return ok, note" in _mw, _mw)
+check("move_window 内部转调 move_window_detail",
+      "move_window_detail(" in _mw, _mw)
+
+# detail 的三元组返回值在三种状态下都得是 (bool, str, why|None)
+def _mk_rect(l, t, r, b):
+    rc = SW.RECT()
+    rc.left, rc.top, rc.right, rc.bottom = l, t, r, b
+    return rc
+
+
+_rc = _mk_rect(100, 100, 900, 700)
+_pl = SW.WINDOWPLACEMENT()
+_pl.showCmd = SW.SW_SHOWNORMAL
+_pl.rcNormalPosition = _mk_rect(100, 100, 900, 700)
+_w = SW.Win(0xDEAD, "t", "C", 1, "nope.exe", _rc, 0, _pl)
+
+
+class _Mon:
+    def __init__(self, left):
+        self.rect = _mk_rect(left, 0, left + 1920, 1080)
+        self.work = _mk_rect(left, 0, left + 1920, 1040)
+
+
+_TARGET = _mk_rect(2020, 100, 2820, 700)
+
+for _label, _cmd in (("普通", SW.SW_SHOWNORMAL), ("最小化", SW.SW_SHOWMINIMIZED),
+                     ("最大化", SW.SW_SHOWMAXIMIZED)):
+    _pl.showCmd = _cmd
+    _r = SW.move_window_detail(_w, _TARGET, _Mon(1920))
+    check(f"{_label}窗口：move_window_detail 返回三元组 (bool, str, why)",
+          isinstance(_r, tuple) and len(_r) == 3
+          and isinstance(_r[0], bool) and isinstance(_r[1], str)
+          and (_r[2] is None or isinstance(_r[2], str)), str(_r))
+
+# 最核心的一条：why 与界面语言**无关**。这条红就是真 bug —— 意味着切语言
+# 会改变程序行为。
+for _lang in ("zh", "en"):
+    I.set_language(_lang)
+    _pl.showCmd = SW.SW_SHOWNORMAL
+    _why = SW.move_window_detail(_w, _TARGET, _Mon(1920))[2]
+    check(f"lang={_lang} 时 why 是 {SW.WHY_SETPOS!r}（不随语言变）",
+          _why == SW.WHY_SETPOS, repr(_why))
+I.set_language("zh")
 
 print()
 if failures:

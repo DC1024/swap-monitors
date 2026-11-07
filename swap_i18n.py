@@ -347,6 +347,117 @@ EN_TEXT = {
 
     # ---- 标点（当分隔符用，所以也得能翻）----
     "、": ", ",
+
+    # ============================================================ 命令行（B6）
+    # swap_windows.py 的输出。GUI 在**同一个进程**里调 sw.main()/sw.swap()，
+    # 所以这些词条和界面共用同一个语言开关；独立跑 CLI 时是默认中文。
+    #
+    # ⚠️ 这几条**不进表**，各有原因：
+    #   · DEFAULT_SKIP_TITLE 里的 "Windows 输入体验" 等：那是**正则**，翻成英文就
+    #     匹配不上系统真实的中文窗口名，等于把默认跳过名单废掉一半；
+    #   · log_error() 的日志正文：用户不直接看，是给我们查问题用的；
+    #   · "--exclude-title" 这类参数名、pair_modes 的 "1→2" 键：机器可读的内部值。
+    " (主屏)": " (main)",
+    "[无标题] {name}": "[untitled] {name}",
+    "最小化": "Minimized",
+    "最大化": "Maximized",
+    "普通": "Normal",
+    "读 placement 失败": "Could not read the window placement",
+    "已更新还原位置": "restore position updated",
+    "最大化窗口": "maximized",
+    "最大化窗口（重试后成功）": "maximized (worked on the second try)",
+    "最大化窗口未能移动: {rect}": "could not move the maximized window: {rect}",
+    "拒绝访问（err=5）：对方进程权限更高，勾选「记住管理员模式」后重试":
+        "Access denied (err=5): that process runs at a higher privilege level — "
+        "turn on \"Remember admin mode\" and try again",
+    "SetWindowPos 失败 err={err}": "SetWindowPos failed, err={err}",
+    "位置未发生变化（窗口自己拒绝了这次移动）":
+        "Position unchanged (the window itself refused the move)",
+    "失败": "failed",
+    "只检测到 1 块显示器，无法互换。":
+        "Only one monitor detected, nothing to swap.",
+    # --permute / --rotate / --monitors 的报错
+    "看不懂这一段：{part}（应形如 1>2）":
+        "Cannot parse {part} (should look like 1>2)",
+    "屏号 {src}>{dst} 超出范围（本机有 {n} 块屏）":
+        "Screen {src}>{dst} is out of range (this machine has {n} screens)",
+    "屏{n} 不能送往自己": "Screen {n} cannot be sent to itself",
+    "屏{n} 指定了两次": "Screen {n} is listed twice",
+    "屏{n} 被多块屏同时选为目标，会挤在一起":
+        "Screen {n} is the target of more than one screen — they would pile up",
+    "--rotate 的屏号必须是数字：{spec}":
+        "Screens for --rotate must be numbers: {spec}",
+    "--rotate 的屏号超出范围（本机有 {n} 块屏）":
+        "Screens for --rotate are out of range (this machine has {n} screens)",
+    "--rotate 的屏号有重复": "Screens for --rotate are duplicated",
+    "--rotate 至少需要两块屏": "--rotate needs at least two screens",
+    "--monitors 的屏号必须是数字：{spec}":
+        "Screens for --monitors must be numbers: {spec}",
+    "--monitors 应为两块不同的屏，例如 --monitors 1,2":
+        "--monitors takes two different screens, e.g. --monitors 1,2",
+    "{what} 的正则写错了：{err}（收到的是 {pat}）":
+        "Bad regex in {what}: {err} (received {pat})",
+    # --list 的输出
+    "DPI 感知模式: {mode}": "DPI awareness: {mode}",
+    "=== 显示器 ===": "=== Monitors ===",
+    "  <== 送往 屏{n}": "  <== to Screen {n}",
+    "区域 {rect}  {w}x{h}{mark}": "rect {rect}  {w}x{h}{mark}",
+    "=== 会被互换的窗口（{n} 个）===": "=== Windows to be swapped ({n}) ===",
+    "屏?": "Screen ?",
+    "管理员进程?": "admin process?",
+    # 计划与结果
+    "没有需要互换的窗口。": "Nothing to swap.",
+    "没有需要互换的窗口": "Nothing to swap",
+    "映射：{pairs}": "Mapping: {pairs}",
+    "屏{src}→屏{dst}（{mode}）": "Screen {src} → Screen {dst} ({mode})",
+    "等比缩放": "scaled",
+    "纯平移": "moved as-is",
+    "[dry-run] 共 {n} 个窗口，未做任何改动。":
+        "[dry-run] {n} windows in total, nothing was changed.",
+    "完成：{ok}/{total} 个窗口已互换。": "Done: {ok}/{total} windows swapped.",
+    "完成：{ok}/{total} 个窗口已互换，{bad} 个失败。":
+        "Done: {ok}/{total} windows swapped, {bad} failed.",
+    # argparse 的帮助文本（--help 全是这些）
+    "互换两块显示器上的全部窗口，保持相对布局。":
+        "Swap every window between two monitors, keeping the relative layout.",
+    "列出显示器与待交换窗口": "List monitors and the windows that would move",
+    "只打印计划": "Print the plan only",
+    "要互换的两块屏编号，如 1,2（见 --list）":
+        "The two screens to swap, e.g. 1,2 (see --list)",
+    "环形轮转：窗口沿这个顺序往前推一格，如 --rotate 1,2,3 表示 1→2→3→1；"
+    "不带值则按全部屏的左右顺序轮转":
+        "Ring rotation: each screen's windows move one step along this order, "
+        "e.g. --rotate 1,2,3 means 1→2→3→1; with no value, all screens go "
+        "left to right",
+    "自定义排列：逐条写「源屏>目标屏」，编号见 --list":
+        "Custom mapping: write \"source>target\" per pair, numbers as in --list",
+    "不同分辨率时按比例缩放": "Scale when the resolutions differ",
+    "强制纯平移": "Force plain translation (never scale)",
+    "额外排除的窗口标题正则（标题里含匹配片段就排除，如 Steam）":
+        "Extra regex for titles to exclude (a title containing a match is "
+        "skipped, e.g. Steam)",
+    "只处理标题里含匹配片段的窗口（测试用）":
+        "Only handle windows whose title contains a match (for testing)",
+    "只处理进程名匹配的窗口": "Only handle windows whose process name matches",
+    "排除这些进程（逗号分隔），如 GUI 自己":
+        "Exclude these processes (comma separated), e.g. the GUI itself",
+    "不处理最小化窗口": "Skip minimized windows",
+    "互换后不把原来的前台窗口切回来":
+        "Do not switch focus back to the original window after swapping",
+    "逐个打印结果": "Print each result",
+    "静默模式": "Quiet mode",
+    "以 JSON 输出（给 GUI 用）": "Output JSON (consumed by the GUI)",
+    "静默运行，仅出错时弹窗提示（给热键快捷方式用）":
+        "Run silently, only show a dialog on failure (for the hotkey shortcut)",
+    "--scale 与 --translate-only 不能同时用。":
+        "--scale and --translate-only cannot be used together.",
+    "屏幕互换未完全成功（返回码 {rc}）。\n"
+    "部分窗口可能属于管理员权限进程，\n"
+    "请改用管理员身份运行，或先关闭这些窗口。":
+        "The screen swap did not fully succeed (exit code {rc}).\n"
+        "Some windows probably belong to programs running as admin.\n"
+        "Run this program as administrator, or close those windows first.",
+    "屏幕互换": "Swap Monitors",
 }
 
 

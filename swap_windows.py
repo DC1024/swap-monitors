@@ -29,6 +29,10 @@ import sys
 import time
 from ctypes import wintypes
 
+# 界面语言。swap_gui 会先 apply_language() 再在**同一个进程**里调 sw.main()/sw.swap()，
+# 所以这里拿到的就是 GUI 选定的语言；独立跑 CLI 时没人设过，_ACTIVE 是默认的中文。
+from swap_i18n import T
+
 # ---------------------------------------------------------------- Win32 基础
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -229,7 +233,8 @@ class Monitor:
 
     @property
     def label(self):
-        return f"{self.device}{' (主屏)' if self.primary else ''}"
+        return T("{device}{star}", device=self.device,
+                 star=T(" (主屏)") if self.primary else "")
 
 
 def enumerate_monitors():
@@ -264,11 +269,17 @@ class Win:
     @property
     def label(self):
         """显示用名字：标题为空（Electron 主窗）时退回进程名，免得列表里一片空白。"""
-        return self.title if self.title.strip() else f"[无标题] {self.proc or self.cls}"
+        if self.title.strip():
+            return self.title
+        return T("[无标题] {name}", name=self.proc or self.cls)
 
     def state_name(self):
-        return {SW_SHOWMINIMIZED: "最小化", SW_SHOWMAXIMIZED: "最大化",
-                SW_SHOWNORMAL: "普通"}.get(self.state, str(self.state))
+        """状态的**显示**名字（会进 JSON 的 "state"，GUI 表格直接显示）。
+
+        只用来显示，别拿它判断状态 —— 判断用 self.state（showCmd 原值）。
+        """
+        return {SW_SHOWMINIMIZED: T("最小化"), SW_SHOWMAXIMIZED: T("最大化"),
+                SW_SHOWNORMAL: T("普通")}.get(self.state, str(self.state))
 
 
 def _mon_index(hmon, monitors):
@@ -450,19 +461,21 @@ def parse_permute(spec, n):
             continue
         m = re.match(r"^(\d+)\s*>\s*(\d+)$", part)
         if not m:
-            raise ValueError(f"看不懂这一段：{part!r}（应形如 1>2）")
+            raise ValueError(T("看不懂这一段：{part}（应形如 1>2）", part=repr(part)))
         s, d = int(m.group(1)) - 1, int(m.group(2)) - 1
         if not (0 <= s < n and 0 <= d < n):
-            raise ValueError(f"屏号 {s + 1}>{d + 1} 超出范围（本机有 {n} 块屏）")
+            raise ValueError(T("屏号 {src}>{dst} 超出范围（本机有 {n} 块屏）",
+                               src=s + 1, dst=d + 1, n=n))
         if s == d:
-            raise ValueError(f"屏{s + 1} 不能送往自己")
+            raise ValueError(T("屏{n} 不能送往自己", n=s + 1))
         if s in perm:
-            raise ValueError(f"屏{s + 1} 指定了两次")
+            raise ValueError(T("屏{n} 指定了两次", n=s + 1))
         perm[s] = d
     dsts = list(perm.values())
     if len(set(dsts)) != len(dsts):
         dup = [d + 1 for d in dsts if dsts.count(d) > 1]
-        raise ValueError(f"屏{sorted(set(dup))[0]} 被多块屏同时选为目标，会挤在一起")
+        raise ValueError(T("屏{n} 被多块屏同时选为目标，会挤在一起",
+                           n=sorted(set(dup))[0]))
     return perm
 
 
@@ -481,11 +494,28 @@ def _center_in(r, area):
     return area.left <= cx < area.right and area.top <= cy < area.bottom
 
 
-def move_window(win, target, dst):
-    """按窗口状态安全落位，返回 (ok, note)。
+# move_window 的**失败原因**，和给人看的 note 分开。
+#
+# 为什么非分开不可：swap() 原来用 `"拒绝访问" in note` 判断「是不是权限不够」，
+# 再拿这个计数决定要不要提示用户「以管理员身份重启」。note 是要显示给用户的，
+# 界面一切成英文它就不是那四个字了 —— 而 `in` 判断**不会报错**，只会恒为假：
+# 用户照样看到「部分窗口未能互换」，但再也看不到「要不要用管理员重开」那一步，
+# 等于把一个功能悄悄关掉。这和 B1 的下拉框是同一类错：拿显示文字当语义用。
+#
+# 所以判定改走 why（机器可读、永不翻译），note 只负责好看。
+WHY_DENIED = "denied"          # err=5：UIPI 拒绝，对方权限更高
+WHY_PLACEMENT = "placement"    # 读/写 window placement 失败
+WHY_SETPOS = "setpos"          # SetWindowPos 其他失败
+WHY_NOCHANGE = "nochange"      # 调用成功但位置没动（窗口自己拒绝了）
+WHY_MAXIMIZED = "maximized"    # 最大化窗口没能落到目标屏
 
-    注意这里**不收 verbose**：逐条打印由 swap() 自己按 args.verbose 决定，
-    参数传进来也没人用（以前确实有一个，是死的）。
+
+def move_window_detail(win, target, dst):
+    """按窗口状态安全落位，返回 (ok, note, why)。
+
+    note 是**给人看的**（要过 T()，会被翻译）；why 是给代码判断的
+    （见上面 WHY_* 那一组，永不翻译）。调用方要判断失败原因就读 why，
+    别去 note 里找字 —— 那句话哪天改个说法，判断就静默失效了。
     """
     hwnd, state = win.hwnd, win.state
     flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER
@@ -494,10 +524,11 @@ def move_window(win, target, dst):
         wp = WINDOWPLACEMENT()
         wp.length = ctypes.sizeof(WINDOWPLACEMENT)
         if not user32.GetWindowPlacement(hwnd, ctypes.byref(wp)):
-            return False, "读 placement 失败"
+            return False, T("读 placement 失败"), WHY_PLACEMENT
         wp.rcNormalPosition = target
         wp.showCmd = SW_SHOWMINIMIZED  # 保持最小化，只改"将来还原到哪"
-        return bool(user32.SetWindowPlacement(hwnd, ctypes.byref(wp))), "已更新还原位置"
+        ok = bool(user32.SetWindowPlacement(hwnd, ctypes.byref(wp)))
+        return ok, T("已更新还原位置"), (None if ok else WHY_PLACEMENT)
 
     if state == SW_SHOWMAXIMIZED:
         # 1) 就地取消最大化（用 SHOWNOACTIVATE 避免抢焦点）
@@ -522,9 +553,9 @@ def move_window(win, target, dst):
             user32.ShowWindow(hwnd, SW_MAXIMIZE)
             user32.GetWindowRect(hwnd, ctypes.byref(cur))
             if _center_in(cur, dst.rect):
-                return True, "最大化窗口（重试后成功）"
-            return False, f"最大化窗口未能移动: {cur!s}"
-        return True, "最大化窗口"
+                return True, T("最大化窗口（重试后成功）"), None
+            return False, T("最大化窗口未能移动: {rect}", rect=str(cur)), WHY_MAXIMIZED
+        return True, T("最大化窗口"), None
 
     before = RECT()
     user32.GetWindowRect(hwnd, ctypes.byref(before))
@@ -540,19 +571,32 @@ def move_window(win, target, dst):
         # 别再拿「读不到进程名」当判据，同样权限时进程名照样读得到，
         # 但窗口仍然可能被拒绝（比如对方的窗口被保护）。
         if err == 5:
-            return False, ("拒绝访问（err=5）：对方进程权限更高，"
-                           "勾选「记住管理员模式」后重试")
-        return False, f"SetWindowPos 失败 err={err}"
+            return False, T("拒绝访问（err=5）：对方进程权限更高，"
+                            "勾选「记住管理员模式」后重试"), WHY_DENIED
+        return False, T("SetWindowPos 失败 err={err}", err=err), WHY_SETPOS
     if (after.left, after.top) == (before.left, before.top) \
             and (before.left, before.top) != (target.left, target.top):
-        return False, "位置未发生变化（窗口自己拒绝了这次移动）"
-    return True, ""
+        return False, T("位置未发生变化（窗口自己拒绝了这次移动）"), WHY_NOCHANGE
+    return True, "", None
+
+
+def move_window(win, target, dst):
+    """按窗口状态安全落位，返回 (ok, note)。
+
+    注意这里**不收 verbose**：逐条打印由 swap() 自己按 args.verbose 决定，
+    参数传进来也没人用（以前确实有一个，是死的）。
+
+    这只是 move_window_detail 的薄壳，保留二元组返回值 —— 判断失败原因请直接
+    调 move_window_detail 拿 why，别拿 note 做字符串匹配。
+    """
+    ok, note, _why = move_window_detail(win, target, dst)
+    return ok, note
 
 
 def swap(args):
     monitors = enumerate_monitors()
     if len(monitors) < 2:
-        print("只检测到 1 块显示器，无法互换。", file=sys.stderr)
+        print(T("只检测到 1 块显示器，无法互换。"), file=sys.stderr)
         return 1
 
     n = len(monitors)
@@ -575,22 +619,23 @@ def swap(args):
                 try:
                     order = [int(x) - 1 for x in raw]
                 except ValueError:
-                    return bad(f"--rotate 的屏号必须是数字：{spec!r}")
+                    return bad(T("--rotate 的屏号必须是数字：{spec}", spec=repr(spec)))
                 if any(not (0 <= i < n) for i in order):
-                    return bad(f"--rotate 的屏号超出范围（本机有 {n} 块屏）")
+                    return bad(T("--rotate 的屏号超出范围（本机有 {n} 块屏）", n=n))
                 if len(set(order)) != len(order):
-                    return bad("--rotate 的屏号有重复")
+                    return bad(T("--rotate 的屏号有重复"))
             if len(order) < 2:
-                return bad("--rotate 至少需要两块屏")
+                return bad(T("--rotate 至少需要两块屏"))
             perm = rotate_perm(order)
         elif args.monitors:
             raw = [x for x in re.split(r"[,\s]+", args.monitors) if x.strip()]
             try:
                 idx = [int(x) - 1 for x in raw]
             except ValueError:
-                return bad(f"--monitors 的屏号必须是数字：{args.monitors!r}")
+                return bad(T("--monitors 的屏号必须是数字：{spec}",
+                             spec=repr(args.monitors)))
             if len(idx) != 2 or any(not (0 <= i < n) for i in idx) or idx[0] == idx[1]:
-                return bad("--monitors 应为两块不同的屏，例如 --monitors 1,2")
+                return bad(T("--monitors 应为两块不同的屏，例如 --monitors 1,2"))
             perm = {idx[0]: idx[1], idx[1]: idx[0]}
         else:
             perm = {0: 1, 1: 0}       # 不带参数：沿用老行为，互换最左两块
@@ -604,7 +649,8 @@ def swap(args):
         try:
             return re.compile(pat, re.I)
         except re.error as e:
-            raise ValueError(f"{what} 的正则写错了：{e}（收到的是 {pat!r}）")
+            raise ValueError(T("{what} 的正则写错了：{err}（收到的是 {pat}）",
+                               what=what, err=e, pat=repr(pat)))
 
     try:
         skip = DEFAULT_SKIP_TITLE
@@ -657,17 +703,18 @@ def swap(args):
                                                        w.rect.left))],
             }, ensure_ascii=True))
             return 0
-        print(f"DPI 感知模式: {DPI_MODE}\n")
-        print("=== 显示器 ===")
+        print(T("DPI 感知模式: {mode}", mode=DPI_MODE) + "\n")
+        print(T("=== 显示器 ==="))
         for i, m in enumerate(monitors):
-            mark = f"  <== 送往 屏{perm[i] + 1}" if i in perm else ""
-            print(f"  [{i + 1}] {m.label}  区域 {m.rect.as_tuple()}  "
-                  f"{m.rect.width}x{m.rect.height}{mark}")
-        print(f"\n=== 会被互换的窗口（{len(wins)} 个）===")
+            mark = T("  <== 送往 屏{n}", n=perm[i] + 1) if i in perm else ""
+            print(f"  [{i + 1}] {m.label}  "
+                  + T("区域 {rect}  {w}x{h}{mark}", rect=m.rect.as_tuple(),
+                      w=m.rect.width, h=m.rect.height, mark=mark))
+        print("\n" + T("=== 会被互换的窗口（{n} 个）===", n=len(wins)))
         for w in sorted(wins, key=lambda w: (w.mon if w.mon is not None else 9, w.rect.left)):
-            tag = f"屏{(w.mon + 1) if w.mon is not None else '?'}"
+            tag = T("屏{n}", n=w.mon + 1) if w.mon is not None else T("屏?")
             print(f"  {tag} {w.state_name():<4s} {w.rect!s:<28s} "
-                  f"{(w.proc or '管理员进程?'):<22s} {w.label[:48]!r}")
+                  f"{(w.proc or T('管理员进程?')):<22s} {w.label[:48]!r}")
         return 0
 
     mode = "scale" if args.scale else ("translate" if args.translate_only else "auto")
@@ -712,29 +759,32 @@ def swap(args):
             "hwnd": int(p["w"].hwnd),
             "title": p["w"].title, "proc": p["w"].proc, "pid": p["w"].pid,
             "state": p["w"].state_name(), "mode": p["pm"],
-            "direction": f"屏{p['si'] + 1}→屏{p['di'] + 1}",
+            "direction": T("屏{src}→屏{dst}", src=p["si"] + 1, dst=p["di"] + 1),
             "from": rect_json(p["base"]), "to": rect_json(p["to"]),
         } for p in plan],
         "moved": 0, "failed": 0, "errors": [],
     }
 
     if not plan:
-        say("没有需要互换的窗口。")
-        payload["note"] = "没有需要互换的窗口"
+        say(T("没有需要互换的窗口。"))
+        payload["note"] = T("没有需要互换的窗口")
         if jmode:
             print(json.dumps(payload, ensure_ascii=True))
         return 0
 
-    say("映射：" + "、".join(
-        f"屏{s + 1}→屏{d + 1}（{'等比缩放' if pair_modes[f'{s + 1}→{d + 1}'] == 'scale' else '纯平移'}）"
-        for s, d in sorted(perm.items())))
+    say(T("映射：{pairs}", pairs=T("、").join(
+        T("屏{src}→屏{dst}（{mode}）", src=s + 1, dst=d + 1,
+          mode=T("等比缩放") if pair_modes[f"{s + 1}→{d + 1}"] == "scale"
+          else T("纯平移"))
+        for s, d in sorted(perm.items()))))
     say("")
     for p in plan:
-        say(f"  [屏{p['si'] + 1}→屏{p['di'] + 1}] {p['w'].label[:44]!r} "
+        say(f"  [{T('屏{src}→屏{dst}', src=p['si'] + 1, dst=p['di'] + 1)}] "
+            f"{p['w'].label[:44]!r} "
             f"{p['w'].state_name()} {p['base']!s} → {p['to']!s}")
 
     if args.dry_run:
-        say(f"\n[dry-run] 共 {len(plan)} 个窗口，未做任何改动。")
+        say("\n" + T("[dry-run] 共 {n} 个窗口，未做任何改动。", n=len(plan)))
         if jmode:
             print(json.dumps(payload, ensure_ascii=True))
         return 0
@@ -746,19 +796,21 @@ def swap(args):
     ok_n = warn = denied = 0
     for p in plan:
         w, target, dst = p["w"], p["to"], p["dst"]
-        ok, note = move_window(w, target, dst)
+        ok, note, why = move_window_detail(w, target, dst)
         if not ok:
             warn += 1
             msg = f"{w.label[:40]!r} {note}"
             payload["errors"].append(msg)
-            # err=5 是权限不足的铁证；「读不到进程名」只能作为兜底线索 ——
-            # 本程序与对方同为管理员时进程名读得到，窗口仍可能被拒绝。
-            if "拒绝访问" in note or w.proc is None:
+            # 判「权限不够」只认 why：note 是给人看的、会跟着界面语言变，
+            # 拿它做 `in` 匹配的话，界面一切英文这个计数就恒为 0 了
+            # （不报错、也不再有「要不要以管理员重启」那一步）。
+            if why == WHY_DENIED or w.proc is None:
                 denied += 1
-            say(f"  ! 失败: {msg}")
+            say(f"  ! {T('失败')}: {msg}")
         else:
             ok_n += 1
-            say(f"  ✓ {w.label[:40]!r} → {target!s} {note}") if args.verbose else None
+            if args.verbose:
+                say(f"  ✓ {w.label[:40]!r} → {target!s} {note}")
     if fg and user32.IsWindow(fg) and user32.GetForegroundWindow() != fg:
         try:
             user32.SetForegroundWindow(fg)
@@ -770,14 +822,17 @@ def swap(args):
     payload["ok"] = warn == 0
     if jmode:
         print(json.dumps(payload, ensure_ascii=True))
+    elif warn:
+        print("\n" + T("完成：{ok}/{total} 个窗口已互换，{bad} 个失败。",
+                       ok=ok_n, total=len(plan), bad=warn))
     else:
-        print(f"\n完成：{ok_n}/{len(plan)} 个窗口已互换"
-              + (f"，{warn} 个失败。" if warn else "。"))
+        print("\n" + T("完成：{ok}/{total} 个窗口已互换。",
+                       ok=ok_n, total=len(plan)))
     return 0 if warn == 0 else 2
 
 
 def _harden_console():
-    """让 print 永远别把程序搞崩。
+    """让 print 永远别把程序搞崩，也别把中文输出成 `?????`。
 
     踩过的坑（2026-10-11 实测，v1.1.3 的 exe 就是这么崩的）：
     打包成 --windowed 的 exe 从 cmd 里跑时，`sys.stdout` 的编码是 **GBK(cp936)**。
@@ -786,13 +841,29 @@ def _harden_console():
     用户看到的是「exe 一闪而过 / 挂住不动」，而我们看到的是
     `File "swap_windows.py", line 544, in swap`。
 
-    改成 `errors="replace"`：**编码保持不变**（中文控制台照旧显示正常），
-    编不出来的字符退化成 `?`，绝不崩。机器可读的 `--json` 另外用
-    `ensure_ascii=True` 输出纯 ASCII，从根上免疫编码问题。
+    `errors="replace"` 解决崩溃：编不出来的字符退化成 `?`，绝不崩。机器可读的
+    `--json` 另外用 `ensure_ascii=True` 输出纯 ASCII，从根上免疫编码问题。
+
+    ⚠️ 但**只加 errors="replace" 不够**，这是 v1.1.9 之前一直没发现的一处：
+    输出被重定向到文件/管道时，Python 用的是**系统 ANSI 代码页**
+    （英文系统 = cp1252），那个编码里根本没有汉字 —— 于是整份中文输出全变成
+    `?????`，一句都读不出来。界面切成英文时更明显：译文是英文、编码是 cp1252，
+    看着没问题，可只要还有一句中文（比如窗口标题），它就成了一串问号。
+
+    所以这里做两件事，顺序不能反：
+      1. 先确保编码是 UTF-8（控制台已经能显示中文时不动它，免得改坏中文控制台）；
+      2. 再加 errors="replace" 兜底，保证任何情况下都不抛异常。
     """
     for s in (sys.stdout, sys.stderr):
         try:
-            if s is not None and hasattr(s, "reconfigure"):
+            if s is None or not hasattr(s, "reconfigure"):
+                continue
+            enc = (getattr(s, "encoding", "") or "").lower().replace("-", "")
+            # 只有「不是 UTF-8 且编不了中文」时才改。中文控制台（gbk/cp936）
+            # 能显示汉字，改它反而可能让用户看到乱码，所以放过。
+            if enc not in ("utf8", "utf8sig", "gbk", "cp936", "gb18030", "cp54936"):
+                s.reconfigure(encoding="utf-8", errors="replace")
+            else:
                 s.reconfigure(errors="replace")
         except Exception:
             pass
@@ -801,45 +872,51 @@ def _harden_console():
 def main(argv=None):
     _harden_console()
     p = argparse.ArgumentParser(
-        description="互换两块显示器上的全部窗口，保持相对布局。")
-    p.add_argument("--list", action="store_true", help="列出显示器与待交换窗口")
-    p.add_argument("--dry-run", action="store_true", help="只打印计划")
-    p.add_argument("--monitors", help="要互换的两块屏编号，如 1,2（见 --list）")
+        description=T("互换两块显示器上的全部窗口，保持相对布局。"))
+    p.add_argument("--list", action="store_true",
+                   help=T("列出显示器与待交换窗口"))
+    p.add_argument("--dry-run", action="store_true", help=T("只打印计划"))
+    p.add_argument("--monitors", help=T("要互换的两块屏编号，如 1,2（见 --list）"))
     p.add_argument("--rotate", nargs="?", const="*", default=None,
                    metavar="1,2,3",
-                   help="环形轮转：窗口沿这个顺序往前推一格，如 --rotate 1,2,3 "
-                        "表示 1→2→3→1；不带值则按全部屏的左右顺序轮转")
+                   help=T("环形轮转：窗口沿这个顺序往前推一格，如 --rotate 1,2,3 "
+                          "表示 1→2→3→1；不带值则按全部屏的左右顺序轮转"))
     p.add_argument("--permute", metavar="1>2,2>3,3>1",
-                   help="自定义排列：逐条写「源屏>目标屏」，编号见 --list")
-    p.add_argument("--scale", action="store_true", help="不同分辨率时按比例缩放")
-    p.add_argument("--translate-only", action="store_true", help="强制纯平移")
+                   help=T("自定义排列：逐条写「源屏>目标屏」，编号见 --list"))
+    p.add_argument("--scale", action="store_true",
+                   help=T("不同分辨率时按比例缩放"))
+    p.add_argument("--translate-only", action="store_true", help=T("强制纯平移"))
     p.add_argument("--exclude-title",
-                   help="额外排除的窗口标题正则（标题里含匹配片段就排除，如 Steam）")
+                   help=T("额外排除的窗口标题正则（标题里含匹配片段就排除，如 Steam）"))
     p.add_argument("--only-title",
-                   help="只处理标题里含匹配片段的窗口（测试用）")
-    p.add_argument("--only-proc", help="只处理进程名匹配的窗口")
-    p.add_argument("--exclude-pid", help="排除这些进程（逗号分隔），如 GUI 自己")
+                   help=T("只处理标题里含匹配片段的窗口（测试用）"))
+    p.add_argument("--only-proc", help=T("只处理进程名匹配的窗口"))
+    p.add_argument("--exclude-pid",
+                   help=T("排除这些进程（逗号分隔），如 GUI 自己"))
     p.add_argument("--skip-minimized", action="store_true",
-                   help="不处理最小化窗口")
+                   help=T("不处理最小化窗口"))
     # store_false 的默认值就是 True：不写这个参数时行为和以前完全一样
     p.add_argument("--no-restore-focus", dest="restore_focus", action="store_false",
-                   help="互换后不把原来的前台窗口切回来")
-    p.add_argument("-v", "--verbose", action="store_true", help="逐个打印结果")
-    p.add_argument("-q", "--quiet", action="store_true", help="静默模式")
-    p.add_argument("--json", action="store_true", help="以 JSON 输出（给 GUI 用）")
+                   help=T("互换后不把原来的前台窗口切回来"))
+    p.add_argument("-v", "--verbose", action="store_true", help=T("逐个打印结果"))
+    p.add_argument("-q", "--quiet", action="store_true", help=T("静默模式"))
+    p.add_argument("--json", action="store_true",
+                   help=T("以 JSON 输出（给 GUI 用）"))
     p.add_argument("--gui", action="store_true",
-                   help="静默运行，仅出错时弹窗提示（给热键快捷方式用）")
+                   help=T("静默运行，仅出错时弹窗提示（给热键快捷方式用）"))
     args = p.parse_args(argv)
     if args.scale and args.translate_only:
-        print("--scale 与 --translate-only 不能同时用。", file=sys.stderr)
+        print(T("--scale 与 --translate-only 不能同时用。"), file=sys.stderr)
         return 1
     rc = swap(args)
     if args.gui and rc != 0:
         try:
-            user32.MessageBoxW(None, f"屏幕互换未完全成功（返回码 {rc}）。\n"
-                                     "部分窗口可能属于管理员权限进程，\n"
-                                     "请改用管理员身份运行，或先关闭这些窗口。",
-                               "屏幕互换", 0x30)  # MB_ICONWARNING
+            user32.MessageBoxW(
+                None,
+                T("屏幕互换未完全成功（返回码 {rc}）。\n"
+                  "部分窗口可能属于管理员权限进程，\n"
+                  "请改用管理员身份运行，或先关闭这些窗口。", rc=rc),
+                T("屏幕互换"), 0x30)  # MB_ICONWARNING
         except Exception:
             pass
     return rc

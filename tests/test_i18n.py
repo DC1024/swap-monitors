@@ -464,6 +464,72 @@ check("反向：没包 T() 的弹框正文被点名（2 条）",
       [ln for ln, _c, _t in untranslated_dialog_texts(_dpath)] == [2, 4],
       str(untranslated_dialog_texts(_dpath)))
 
+# ------------------------------------------------------------
+# ④f  swap_windows.py 的 print / stderr 里不许有裸奔的中文字面量
+# ④d 只查 T("中文…") 的 key 有没有译文 —— 它管不到「压根没包 T()」的句子。
+# 而 CLI 的输出正是最容易被忘掉的地方：⑦ 的审计要建 Tk 窗，只覆盖 GUI 控件，
+# `print("=== 显示器 ===")` 这种行它一辈子扫不到。
+#
+# 判据：`print(...)` 的实参、`file=sys.stderr` 的那条、以及 raise ValueError(...)
+# 的实参里，只要出现**中文且没被 T() 包住**的字面量就算漏翻。
+# 明确放行的三处（写在这里，免得后人以为漏了）：
+#   · log_error(...)  —— 日志正文，用户不直接看；
+#   · DEFAULT_SKIP_TITLE 的正则 —— 那是**匹配系统窗口名**的，翻了就匹配不上；
+#   · 本文件的 docstring / 注释 —— ast 天然不看。
+_ALLOWED_RAW = {"log_error"}
+
+
+def untranslated_cli_texts(path):
+    """返回 [(行号, 调用, 片段)]：CLI 输出里没包 T() 的中文字面量。"""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), path)
+    bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = (fn.id if isinstance(fn, ast.Name)
+                else fn.attr if isinstance(fn, ast.Attribute) else "")
+        if name in _ALLOWED_RAW:
+            continue
+        if name not in ("print", "ValueError"):
+            continue
+        for a in node.args:
+            # 只看直接写的中文字面量：T(...) 是个 Call，天然不会被匹配到
+            if (isinstance(a, ast.Constant) and isinstance(a.value, str)
+                    and CJK.search(a.value)):
+                bad.append((a.lineno, name, a.value.split("\n")[0][:30]))
+    return bad
+
+
+_cli_bad = untranslated_cli_texts(os.path.join(ROOT, "swap_windows.py"))
+check("swap_windows.py 里 print / raise 的正文都包了 T()", not _cli_bad,
+      "; ".join(f"L{n} {c} {t!r}" for n, c, t in _cli_bad[:5]))
+
+# 反向验证：塞一个裸 print 进去，必须点名
+_cpath2 = os.path.join(TMP, "bad_cli.py")
+with open(_cpath2, "w", encoding="utf-8") as f:
+    f.write("def g():\n"
+            "    print(\"没翻的一行\")\n"
+            "    print(T(\"翻好的\"))\n"
+            "    log_error(\"日志不翻\")\n"
+            "    raise ValueError(\"没翻的报错\")\n")
+check("反向：裸 print / 裸 raise 被点名（2 条），log_error 放行",
+      [ln for ln, _c, _t in untranslated_cli_texts(_cpath2)] == [2, 5],
+      str(untranslated_cli_texts(_cpath2)))
+
+# 本批的「不翻」清单必须真的还在：默认跳过正则里的中文是**匹配用**的，
+# 谁把它翻成英文，默认跳过名单就会漏掉系统真实的中文窗口名。
+# 这条同时钉住「不能因为 ④f 变绿就顺手把正则也包上 T()」。
+# ⚠️ 别写成 `k in I.EN_TEXT is False` —— 那是链式比较，等价于
+# `(k in I.EN_TEXT) and (I.EN_TEXT is False)`，恒为假，等于没测。
+_SKIP_PAT = "Windows 输入体验"
+check(f"默认跳过正则里的 {_SKIP_PAT!r} 原样保留在源码里（匹配用，不是显示用）",
+      _SKIP_PAT in open(os.path.join(ROOT, "swap_windows.py"),
+                        encoding="utf-8").read())
+check(f"英译表里**没有** {_SKIP_PAT!r} 这一条（它不该被翻）",
+      _SKIP_PAT not in I.EN_TEXT)
+
 # ============================================================
 section("⑤ lang 配置项：默认中文、脏值不崩")
 

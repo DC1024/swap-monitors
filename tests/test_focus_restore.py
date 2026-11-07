@@ -176,17 +176,22 @@ FG, OTHER = 9001, 9002           # 互换期间前台被抢到了 OTHER
 def run_swap(args, fake_u32):
     """把引擎边界全部换成替身跑一遍 swap()，返回返回码。"""
     o_mon, o_win = SW.enumerate_monitors, SW.enumerate_windows
-    o_move, o_u32 = SW.move_window, SW.user32
+    o_move, o_u32 = SW.move_window_detail, SW.user32
     SW.enumerate_monitors = lambda: MONITORS
     SW.enumerate_windows = lambda *a, **k: WINS
-    SW.move_window = lambda w, target, dst, verbose=True: (True, "")
+    # swap() 要拿「失败原因」判断是不是权限不足，所以它调的是
+    # move_window_detail（三元组），不是 move_window（二元组薄壳）。
+    # 这里必须替身**被真正调用到的那个**，否则桩形同虚设：
+    # 真正的 move_window_detail 会去碰 user32，而下面的 FakeUser32 只实现了
+    # 焦点相关的三个 API —— 一跑就是 AttributeError。
+    SW.move_window_detail = lambda w, target, dst: (True, "", None)
     SW.user32 = fake_u32
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             return SW.swap(args)
     finally:
         SW.enumerate_monitors, SW.enumerate_windows = o_mon, o_win
-        SW.move_window, SW.user32 = o_move, o_u32
+        SW.move_window_detail, SW.user32 = o_move, o_u32
 
 
 # 正向：勾着的时候必须真的把焦点切回去 —— 否则下面的「没调用」毫无意义
