@@ -300,6 +300,137 @@ check("反向：把调用挪到 _build() 之后，顺序检查必须失败",
       > _line_of(_MOVED_INIT, attr="_build"))
 
 # ============================================================
+section("⑦ 界面上真的没有漏翻的中文（中英各建一次窗）")
+
+# 这一节要真建窗口 —— 它验的是「扫文案有没有漏」，这个只有把控件建出来才看得见：
+# 词条表写得再整齐，只要某个 ttk.Label 忘了包 T()，界面上就是一句中文。
+import tkinter as tk                              # noqa: E402
+
+# 这些控件的文字是**运行时才定**的（窗口数、注册状态、当前排列说明……），
+# 一档只扫静态文案，它们留给下一批。名单里每减一项，都是那批的工作量。
+DYNAMIC = ("count_lbl", "perm_lbl", "perm_hint", "perm_warn", "hk_state", "status")
+
+
+def build_app(lang):
+    with open(TEST_CFG, "w", encoding="utf-8") as f:
+        json.dump({"lang": lang}, f)
+    root = tk.Tk()
+    root.withdraw()
+    return root, G.App(root)
+
+
+def walk(w, out=None):
+    out = [] if out is None else out
+    out.append(w)
+    for c in w.winfo_children():
+        walk(c, out)
+    return out
+
+
+def subtree_ids(w):
+    return {id(x) for x in walk(w)}
+
+
+def cjk_texts(widgets):
+    """控件 text 里还带中文的（没有 -text 选项的控件直接跳过）。"""
+    bad = []
+    for w in widgets:
+        try:
+            t = w.cget("text")
+        except tk.TclError:            # Frame / Combobox / Treeview 没有 -text
+            continue
+        if isinstance(t, str) and CJK.search(t):
+            bad.append(f"{w.winfo_class()} {t!r}")
+    return bad
+
+
+def audit(lang):
+    """建一次窗，返回（跳过动态控件后仍带中文的控件, 全部控件数）。"""
+    root, app = build_app(lang)
+    try:
+        skip = {id(getattr(app, n)) for n in DYNAMIC if hasattr(app, n)}
+        skip |= subtree_ids(app.cards)          # 卡片里的「屏1 / 送往」也是动态的
+        skip |= subtree_ids(app.perm_warn_box)  # 提醒条同理
+        widgets = [w for w in walk(root) if id(w) not in skip]
+        bad = cjk_texts(widgets)
+        heads = [app.tree.heading(c, "text")
+                 for c in ("mon", "state", "rect", "proc", "title", "to")]
+        bad += [f"表头 {h!r}" for h in heads if CJK.search(h or "")]
+        return bad, len(widgets), heads
+    finally:
+        root.destroy()
+
+
+# 反向验证先跑：中文模式下同一个 walker 必须**抓得到**一堆中文。
+# 不然「英文模式下没有中文」可能只是因为 walker 什么都没扫到（假绿）。
+_bad_zh, _n_zh, _head_zh = audit("zh")
+check(f"中文模式下扫到 {_n_zh} 个控件，其中带中文的不少于 15 个（说明 walker 真在扫）",
+      _n_zh > 20 and len(_bad_zh) >= 15, f"{len(_bad_zh)} 个带中文")
+
+_bad_en, _n_en, _head_en = audit("en")
+check(f"英文模式下扫了 {_n_en} 个控件", _n_en > 20, str(_n_en))
+check("英文模式下没有任何一个控件残留中文", not _bad_en,
+      "; ".join(_bad_en[:6]))
+check("英文模式下六个表头也全翻好了",
+      _head_en == ["Screen", "State", "Rect", "Process", "Window title", "Goes to"],
+      str(_head_en))
+check("中文模式下六个表头是中文",
+      _head_zh == ["屏幕", "状态", "位置", "进程", "窗口标题", "互换后"], str(_head_zh))
+
+# 窗口标题也要跟着语言走
+for _lang, _want in (("zh", "多屏窗口互换"), ("en", "Swap Monitors")):
+    _r, _a = build_app(_lang)
+    _t = _r.title()
+    _r.destroy()
+    check(f"lang={_lang} 时窗口标题是 {_want!r}", _t.startswith(_want), _t)
+
+I.set_language("zh")
+
+# ============================================================
+section("⑧ 语言下拉框：存进配置、明说要重启、不当场改")
+
+_root, _app = build_app("zh")
+check("下拉框给出的选项是中文/English/跟随系统",
+      [lb for lb, _v in _app._lang_choices] == ["中文", "English", "跟随系统"],
+      str([lb for lb, _v in _app._lang_choices]))
+check("当前配置是 zh 时，下拉框显示「中文」", _app.lang_var.get() == "中文",
+      _app.lang_var.get())
+
+_app.lang_var.set("English")
+_app._on_lang_change()
+check("选 English 之后配置落盘成 en", G.load_cfg().get("lang") == "en",
+      repr(G.load_cfg().get("lang")))
+check("状态栏用英文提示重启（这句话按**刚选的**语言说）",
+      "restart" in _app.status.cget("text"), _app.status.cget("text"))
+# 这条是「重启生效」这个决定的守门人：一旦有人改成热切换，这里立刻红
+check("这次切换没有当场改变生效中的语言（说明确实是「重启后生效」）",
+      I.current() == "zh", I.current())
+
+_app.lang_var.set("中文")
+_app._on_lang_change()
+check("选回中文也能存回去", G.load_cfg().get("lang") == "zh")
+check("选回中文时中文提示重启", "重启" in _app.status.cget("text"),
+      _app.status.cget("text"))
+
+# 选了个跟当前一样的，应该直接返回：不写盘、也不刷一句没用的提示
+G.save_cfg({**G.DEFAULT_CFG, "lang": "auto"})
+_app.cfg["lang"] = "auto"
+_before = _app.status.cget("text")
+_app.lang_var.set("跟随系统")
+_app._on_lang_change()
+check("选了个没变的选项不刷状态栏（早退，不做无用功）",
+      _app.status.cget("text") == _before, _app.status.cget("text"))
+_root.destroy()
+
+# 配置里写着 auto 时，下拉框显示的是「跟随系统」而不是实际生效的那种语言
+_root2, _app2 = build_app("auto")
+check("配置是 auto 时下拉框显示「跟随系统」", _app2.lang_var.get() == "跟随系统",
+      _app2.lang_var.get())
+_root2.destroy()
+
+I.set_language("zh")
+
+# ============================================================
 os.remove(TEST_CFG)
 
 print()

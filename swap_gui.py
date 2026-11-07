@@ -28,7 +28,7 @@ from tkinter import ttk
 from xml.sax import saxutils
 
 import swap_windows as sw
-from swap_i18n import set_language
+from swap_i18n import T, current as current_lang, set_language
 
 APP_TITLE = "多屏窗口互换"
 APP_VER = "1.1.9"   # 1.1.9：托盘图标不再主动「固定到任务栏」（详见 README 对应小节）
@@ -718,8 +718,12 @@ class TrayThread(threading.Thread):
             self.results.put(("tray_ok", False))
 
     def _tip_text(self):
-        hk = self._shown_hk or "未设热键"
-        return f"{APP_TITLE}　·　热键 {hk}　·　左键双击显示、右键菜单"
+        hk = self._shown_hk or T("未设热键")
+        # 分隔符（全角空格 + 间隔号）留在格式串里，可翻的部分各走各的词条。
+        # 不把整句做成一条带 {占位} 的词条：那样 key 在源码里根本搜不到，
+        # 「表里的键必须能在源码里找到」这条守卫就废了。
+        return (f"{T(APP_TITLE)}　·　{T('热键')} {hk}"
+                f"　·　{T('左键双击显示、右键菜单')}")
 
     def _refresh_tip(self):
         if not self.nid:
@@ -739,12 +743,12 @@ class TrayThread(threading.Thread):
 
     def _popup_menu(self):
         hmenu = u32.CreatePopupMenu()
-        u32.AppendMenuW(hmenu, MF_STRING, self.MENU_SWAP, "立即互换窗口")
-        u32.AppendMenuW(hmenu, MF_STRING, self.MENU_PREVIEW, "预览互换计划")
+        u32.AppendMenuW(hmenu, MF_STRING, self.MENU_SWAP, T("立即互换窗口"))
+        u32.AppendMenuW(hmenu, MF_STRING, self.MENU_PREVIEW, T("预览互换计划"))
         u32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
-        u32.AppendMenuW(hmenu, MF_STRING, self.MENU_SHOW, "显示主界面")
+        u32.AppendMenuW(hmenu, MF_STRING, self.MENU_SHOW, T("显示主界面"))
         u32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
-        u32.AppendMenuW(hmenu, MF_STRING, self.MENU_EXIT, "退出")
+        u32.AppendMenuW(hmenu, MF_STRING, self.MENU_EXIT, T("退出"))
         pt = sw.POINT()
         u32.GetCursorPos(ctypes.byref(pt))
         # TrackPopupMenu 要求先把自己置前台，否则点到菜单外面菜单不消失
@@ -1419,7 +1423,7 @@ class App:
         self.perm = {}             # {源屏(1起): 目标屏(1起)} 哪块屏送往哪块屏
         self._perm_n = None        # 上次初始化排列时的屏数，屏数变了要重新校验
 
-        root.title(f"{APP_TITLE} v{APP_VER}")
+        root.title(f"{T(APP_TITLE)} v{APP_VER}")
         root.configure(bg=C_BG)
         self._set_win_icon()
         self._style()
@@ -1528,11 +1532,11 @@ class App:
         # 顶部标题
         head = ttk.Frame(self.root)
         head.pack(fill="x", padx=18, pady=(16, 10))
-        ttk.Label(head, text=APP_TITLE, style="Title.TLabel").pack(side="left")
-        ttk.Label(head, text="  把屏幕上的窗口整体互换，相对布局原样保留",
+        ttk.Label(head, text=T(APP_TITLE), style="Title.TLabel").pack(side="left")
+        ttk.Label(head, text=T("  把屏幕上的窗口整体互换，相对布局原样保留"),
                   style="Sub.TLabel").pack(side="left", pady=(6, 0))
         # 权限状态 + 提权按钮（放最显眼的位置）
-        self.elev_btn = ttk.Button(head, text="以管理员身份重启", command=self.elevate)
+        self.elev_btn = ttk.Button(head, text=T("以管理员身份重启"), command=self.elevate)
         self.elev_btn.pack(side="right")
         self.perm_lbl = ttk.Label(head, text="", style="Sub.TLabel")
         self.perm_lbl.pack(side="right", padx=(0, 10), pady=(6, 0))
@@ -1544,10 +1548,10 @@ class App:
 
         pre = ttk.Frame(self.root)
         pre.pack(fill="x", padx=18, pady=(8, 0))
-        ttk.Label(pre, text="每块屏的窗口送往：", style="Sub.TLabel").pack(side="left")
-        for text, fn in (("环形轮转", self.preset_rotate),
-                         ("两两互换", self.preset_pair),
-                         ("全部不动", self.preset_none)):
+        ttk.Label(pre, text=T("每块屏的窗口送往："), style="Sub.TLabel").pack(side="left")
+        for text, fn in ((T("环形轮转"), self.preset_rotate),
+                         (T("两两互换"), self.preset_pair),
+                         (T("全部不动"), self.preset_none)):
             ttk.Button(pre, text=text, width=9, command=fn).pack(side="left", padx=(8, 0))
         self.perm_hint = ttk.Label(pre, text="", style="Sub.TLabel")
         self.perm_hint.pack(side="right")
@@ -1565,15 +1569,15 @@ class App:
         mid.pack(fill="both", expand=True, padx=18, pady=(14, 0))
         bar = ttk.Frame(mid)
         bar.pack(fill="x")
-        ttk.Label(bar, text="参与互换的窗口", style="Sect.TLabel").pack(side="left")
+        ttk.Label(bar, text=T("参与互换的窗口"), style="Sect.TLabel").pack(side="left")
         self.count_lbl = ttk.Label(bar, text="", style="Sub.TLabel")
         self.count_lbl.pack(side="left", padx=(8, 0))
-        ttk.Button(bar, text="刷新", command=self.refresh).pack(side="right")
+        ttk.Button(bar, text=T("刷新"), command=self.refresh).pack(side="right")
 
         wrap = ttk.Frame(mid, style="Card.TFrame", padding=1)
         wrap.pack(fill="both", expand=True, pady=(8, 0))
         cols = ("mon", "state", "rect", "proc", "title", "to")
-        heads = ("屏幕", "状态", "位置", "进程", "窗口标题", "互换后")
+        heads = tuple(T(h) for h in ("屏幕", "状态", "位置", "进程", "窗口标题", "互换后"))
         widths = (62, 66, 200, 150, 260, 210)
         self.tree = ttk.Treeview(wrap, columns=cols, show="headings", height=7)
         for c, h, w in zip(cols, heads, widths):
@@ -1594,22 +1598,25 @@ class App:
 
         hk = ttk.Frame(left)
         hk.pack(fill="x")
-        ttk.Label(hk, text="全局热键", style="Sect.TLabel").pack(anchor="w")
+        ttk.Label(hk, text=T("全局热键"), style="Sect.TLabel").pack(anchor="w")
         row = ttk.Frame(hk)
         row.pack(fill="x", pady=(6, 0))
         self.hk_var = tk.StringVar(value=self.cfg["hotkey"])
         self.hk_entry = ttk.Entry(row, textvariable=self.hk_var, width=20,
                                   font=(FONT, 10), justify="center")
         self.hk_entry.pack(side="left", ipady=3)
-        ttk.Button(row, text="录制", width=6, command=self.record_hotkey).pack(
+        # width=7 而不是 6：英文的 "Record" 刚好 6 个字符，卡在临界上，
+        # 字体稍一变化就会被切掉半个字母。多留一格，中文那边只宽 7px。
+        ttk.Button(row, text=T("录制"), width=7, command=self.record_hotkey).pack(
             side="left", padx=6)
-        ttk.Button(row, text="应用", width=6, command=self.apply_hotkey).pack(side="left")
-        self.hk_state = ttk.Label(hk, text="正在注册…", style="Sub.TLabel")
+        ttk.Button(row, text=T("应用"), width=7,
+                   command=self.apply_hotkey).pack(side="left")
+        self.hk_state = ttk.Label(hk, text=T("正在注册…"), style="Sub.TLabel")
         self.hk_state.pack(anchor="w", pady=(6, 0))
 
         ex = ttk.Frame(left)
         ex.pack(fill="x", pady=(12, 0))
-        ttk.Label(ex, text="排除的窗口标题（正则，可留空）",
+        ttk.Label(ex, text=T("排除的窗口标题（正则，可留空）"),
                   style="Sect.TLabel").pack(anchor="w")
         self.ex_var = tk.StringVar(value=self.cfg["exclude_title"])
         self.ex_entry = ttk.Entry(ex, textvariable=self.ex_var, font=(FONT, 9))
@@ -1626,27 +1633,46 @@ class App:
         self.auto_var = tk.BooleanVar(value=self.cfg["autostart"])
         self.admin_var = tk.BooleanVar(value=self.cfg["run_as_admin"])
         for var, text, cmd in (
-                (self.skipmin_var, "跳过最小化窗口", self._save),
-                (self.scale_var, "分辨率不同的屏之间等比缩放（否则纯平移）", self._save),
-                (self.focus_var, "互换后把焦点还给原来的窗口", self._save),
-                (self.notify_var, "互换完成后弹出提示（托盘气泡）", self._save),
-                (self.auto_var, "开机自动启动（开机后静默待在托盘）", self.set_autostart),
-                (self.admin_var, "记住管理员模式（管理员窗口也能搬，启动不再弹 UAC）",
+                (self.skipmin_var, T("跳过最小化窗口"), self._save),
+                (self.scale_var, T("分辨率不同的屏之间等比缩放（否则纯平移）"), self._save),
+                (self.focus_var, T("互换后把焦点还给原来的窗口"), self._save),
+                (self.notify_var, T("互换完成后弹出提示（托盘气泡）"), self._save),
+                (self.auto_var, T("开机自动启动（开机后静默待在托盘）"), self.set_autostart),
+                (self.admin_var, T("记住管理员模式（管理员窗口也能搬，启动不再弹 UAC）"),
                  self.set_run_as_admin)):
             Toggle(opts, text, var, cmd).pack(anchor="w", pady=1)
 
+        # 语言开关。放在选项这一列而不是窗口右上角：这里的高度是**内容长出来的**，
+        # _fit() 会自己量到，不会像菜单栏那样被漏算（菜单栏不计入 reqheight，
+        # 见 _fit 的注释）。
+        lang_row = ttk.Frame(opts)
+        lang_row.pack(fill="x", pady=(10, 1))
+        ttk.Label(lang_row, text=T("界面语言"), style="Sect.TLabel").pack(side="left")
+        # 「中文」「English」保持各自的母语写法：一个英语用户得能在一屏中文里
+        # 一眼认出 English 这几个字母。只有 auto 那项才需要跟着界面语言翻。
+        self._lang_choices = (("中文", "zh"), ("English", "en"), (T("跟随系统"), "auto"))
+        _want = str(self.cfg.get("lang") or "zh").strip().lower()
+        self.lang_var = tk.StringVar(
+            value=next((lb for lb, v in self._lang_choices if v == _want),
+                       next(lb for lb, v in self._lang_choices if v == current_lang())))
+        self.lang_box = ttk.Combobox(lang_row, textvariable=self.lang_var, width=12,
+                                     values=[lb for lb, _v in self._lang_choices],
+                                     state="readonly")
+        self.lang_box.pack(side="left", padx=(8, 0))
+        self.lang_box.bind("<<ComboboxSelected>>", self._on_lang_change)
+
         right = ttk.Frame(bot)
         right.pack(side="right", fill="y", padx=(20, 0))
-        ttk.Button(right, text="立即互换", style="Accent.TButton",
+        ttk.Button(right, text=T("立即互换"), style="Accent.TButton",
                    command=lambda: self.do_swap()).pack(fill="x")
-        ttk.Button(right, text="预览计划（不改动）",
+        ttk.Button(right, text=T("预览计划（不改动）"),
                    command=lambda: self.do_swap(dry=True)).pack(fill="x", pady=(8, 0))
-        self.redo_btn = ttk.Button(right, text="恢复原状（再换一次）",
+        self.redo_btn = ttk.Button(right, text=T("恢复原状（再换一次）"),
                                    command=lambda: self.do_swap())
         self.redo_btn.pack(fill="x", pady=(8, 0))
-        ttk.Button(right, text="退出", command=self.quit_app).pack(fill="x", pady=(8, 0))
+        ttk.Button(right, text=T("退出"), command=self.quit_app).pack(fill="x", pady=(8, 0))
 
-        self.status = ttk.Label(self.root, text="就绪", style="Sub.TLabel")
+        self.status = ttk.Label(self.root, text=T("就绪"), style="Sub.TLabel")
         self.status.pack(fill="x", padx=18, pady=(0, 10))
 
         # 放到最后再挂：_save() 要用到上面所有变量，早挂会有初始化顺序问题
@@ -2110,7 +2136,7 @@ class App:
         self._set_stack_hint(self._stack_hint(self.perm))
         # 「恢复原状」只在对换时成立；轮转要说「再转一次」
         self.redo_btn.configure(
-            text="恢复原状（再换一次）" if self._is_involution() else "再轮转一次")
+            text=T("恢复原状（再换一次）" if self._is_involution() else "再轮转一次"))
 
     def _on_perm_change(self, idx):
         """用户改了某块屏的去向。同一块目标屏不能被两块源屏选走，撞车就把先来的让开。"""
@@ -2489,6 +2515,25 @@ class App:
                 pass
             return False
         return True
+
+    def _on_lang_change(self, _e=None):
+        """用户选了新语言：存进配置，然后明说「要重启才生效」。
+
+        为什么不做热切换：热切换要给每个静态控件登记一份「它的中文原文」，
+        再在切的瞬间把它们全部 configure 一遍；已经画出来的状态栏、窗口列表、
+        提醒条还得各自处理中间态。相比之下「关掉再点开」的代价小得多，
+        而且不会有「一半换了、一半没换」这种最难解释的状态。
+        """
+        lang = dict(self._lang_choices).get(self.lang_var.get(), "zh")
+        if lang == str(self.cfg.get("lang") or "zh").strip().lower():
+            return                       # 选了个跟当前配置一样的，什么都不用做
+        self.cfg["lang"] = lang
+        self._save()
+        # 这句提示**故意**不走 T()：它要按「刚选的那个语言」说，而此刻生效的
+        # 还是旧语言。走 T() 的话，切成英文时这句反而会是中文。
+        self.set_status("Interface language set to English — restart to apply."
+                        if lang == "en"
+                        else "界面语言已改为中文 —— 重启程序后生效。")
 
     def _save(self, *_):
         # 这里**绝对不能**弹框、也不能回写输入框。_save 挂在 ex_var 的 write trace

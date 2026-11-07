@@ -33,6 +33,7 @@
 | **能搬动管理员窗口** | 普通权限搬不动以管理员身份运行的程序，界面里有一键「以管理员身份重启」；真遇到搬不动的窗口时会主动问你要不要提权。勾上 **「记住管理员模式」** 后改用一条「最高权限」计划任务启动，**以后开机和双击都不再弹 UAC** |
 | **分辨率无关** | 两块屏尺寸一致时纯平移（不缩放、不丢像素）；不一致时自动等比缩放并夹进工作区。1920×1080 / 1440p / 4K / 带鱼屏 / 横排竖排都适用。**按「屏对」分别判断**，多屏混排也能每对各走各的方式 |
 | **零依赖** | 免安装单文件 exe，自带 Python 运行时；源码也只用 Python 标准库（`ctypes` + `tkinter`） |
+| **中英双语界面** | 界面底部「界面语言」可切 `中文` / `English` / `跟随系统`，**默认中文**。切换后**重启程序**才生效 —— 刻意不做热重绘，免得出现「一半换了、一半没换」的中间态 |
 
 ---
 
@@ -530,3 +531,7 @@ lines of Python.
 
 Windows only. Download `SwapMonitors.exe` from
 [Releases](https://github.com/DC1024/swap-monitors/releases/latest).
+
+The interface is bilingual: pick **English** under *界面语言 / Language* at the bottom of
+the main window, then restart the app. Chinese is the default so that existing users keep
+the UI they know; `跟随系统 / Auto` follows your Windows display language instead.

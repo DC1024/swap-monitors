@@ -39,8 +39,80 @@ CHOICES = (ZH, EN, AUTO)  # 配置项允许写的三种
 #   · tests/test_i18n.py 会把「源码里找不到的键」和「译文里还带中文的值」
 #     一起拎出来；
 #   · 加词条时直接把源码里那串复制过来，别手打。
+#
+# 翻译口径（改文案时照着这个来，别一句一个风格）：
+#   · 用**动词开头的短句**当按钮/菜单项：Record / Apply / Swap now / Exit
+#   · 整句提示用陈述语气，不加句号，首字母大写
+#   · 不翻译品牌名（多屏窗口互换 = Swap Monitors，与 exe 名一致）
 EN_TEXT = {
-    # 例： "录制": "Record",
+    # ---- 窗口标题与页头 ----
+    "多屏窗口互换": "Swap Monitors",
+    "  把屏幕上的窗口整体互换，相对布局原样保留":
+        "  Swap every window between screens, keeping the relative layout",
+
+    # ---- 页头按钮 ----
+    "以管理员身份重启": "Restart as admin",
+
+    # ---- 排列区 ----
+    "每块屏的窗口送往：": "Send each screen's windows to:",
+    "环形轮转": "Rotate",
+    "两两互换": "Pair up",
+    "全部不动": "Keep all",
+
+    # ---- 窗口清单 ----
+    "参与互换的窗口": "WINDOWS TO SWAP",
+    "刷新": "Refresh",
+    "屏幕": "Screen",
+    "状态": "State",
+    "位置": "Rect",
+    "进程": "Process",
+    "窗口标题": "Window title",
+    "互换后": "Goes to",
+
+    # ---- 热键 ----
+    "全局热键": "GLOBAL HOTKEY",
+    "录制": "Record",
+    "应用": "Apply",
+    "正在注册…": "Registering…",
+
+    # ---- 排除标题 ----
+    "排除的窗口标题（正则，可留空）":
+        "Excluded window titles (regex, leave empty for none)",
+
+    # ---- 选项 ----
+    "跳过最小化窗口": "Skip minimized windows",
+    "分辨率不同的屏之间等比缩放（否则纯平移）":
+        "Scale between screens with different resolutions (otherwise move as-is)",
+    "互换后把焦点还给原来的窗口":
+        "Give focus back to the original window after swapping",
+    "互换完成后弹出提示（托盘气泡）":
+        "Show a tray balloon when the swap finishes",
+    "开机自动启动（开机后静默待在托盘）":
+        "Start with Windows (stays quietly in the tray)",
+    "记住管理员模式（管理员窗口也能搬，启动不再弹 UAC）":
+        "Remember admin mode (move elevated windows too, no UAC prompt)",
+
+    # ---- 主操作按钮 ----
+    "立即互换": "Swap now",
+    "预览计划（不改动）": "Preview (no changes)",
+    "退出": "Exit",
+    "恢复原状（再换一次）": "Restore (swap again)",
+    "再轮转一次": "Rotate again",
+
+    # ---- 状态栏的初始文字 ----
+    "就绪": "Ready",
+
+    # ---- 语言开关 ----
+    "界面语言": "Language",
+    "跟随系统": "Auto",
+
+    # ---- 托盘 ----
+    "立即互换窗口": "Swap windows now",
+    "预览互换计划": "Preview swap plan",
+    "显示主界面": "Show main window",
+    "未设热键": "no hotkey",
+    "热键": "hotkey",
+    "左键双击显示、右键菜单": "double-click to show, right-click for menu",
 }
 
 

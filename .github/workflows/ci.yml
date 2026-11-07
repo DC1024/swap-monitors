@@ -71,7 +71,7 @@ jobs:
         shell: bash
         run: |
           fail=0
-          for t in test_map test_static test_elevate test_autostart test_hardening test_task_command test_hotkey_main_key test_move_window test_win32_decls test_title_filter test_tray_unpromote test_release_notes test_version_claim test_docs_assets test_i18n; do
+          for t in test_map test_static test_elevate test_autostart test_hardening test_task_command test_hotkey_main_key test_move_window test_win32_decls test_title_filter test_tray_unpromote test_release_notes test_version_claim test_docs_assets; do
             echo "::group::$t"
             python "tests/$t.py" || { echo "::error title=$t::tests/$t.py 有断言失败"; fail=1; }
             echo "::endgroup::"
@@ -83,7 +83,7 @@ jobs:
         shell: bash
         run: |
           fail=0
-          for t in test_arrange test_preview test_regex_input test_hotkey_rollback test_tray_retry test_admin_mode test_focus_restore test_poll_resilience test_swap_serialized test_partial_perm; do
+          for t in test_arrange test_preview test_regex_input test_hotkey_rollback test_tray_retry test_admin_mode test_focus_restore test_poll_resilience test_swap_serialized test_partial_perm test_i18n; do
             echo "::group::$t"
             python "tests/$t.py" || { echo "::error title=$t::tests/$t.py 有断言失败"; fail=1; }
             echo "::endgroup::"
