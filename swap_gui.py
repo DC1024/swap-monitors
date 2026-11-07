@@ -32,6 +32,9 @@ from swap_i18n import T, current as current_lang, set_language
 
 APP_TITLE = "多屏窗口互换"
 APP_VER = "1.1.9"   # 1.1.9：托盘图标不再主动「固定到任务栏」（详见 README 对应小节）
+# 排列卡片下拉框里「不参与」那一项的文字。语义上它对应 0 号屏（= 不动），
+# 但两者是分开的：0 是数据，这句话是显示，翻成什么语言都不影响取值。
+LABEL_NONE = "不动"
 # 配置目录名沿用 "SwapMonitors"，刻意不跟着显示名走 ——
 # 这样从 v1.0 升级上来时，热键、排除标题等已有设置不会丢。
 CFG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SwapMonitors")
@@ -2113,7 +2116,7 @@ class App:
                 cb.pack(side="left", padx=(7, 0), fill="x", expand=True)
                 cb.bind("<<ComboboxSelected>>", lambda e, i=i: self._on_perm_change(i))
                 self.card_widgets.append({"frame": f, "tag": tag, "info": info,
-                                          "var": var, "combo": cb})
+                                          "var": var, "combo": cb, "nums": []})
             for c in range(cols):
                 self.cards.columnconfigure(c, weight=1)
 
@@ -2127,8 +2130,17 @@ class App:
             cw["info"].configure(
                 text=f"{m['width']}×{m['height']}　　左 {m['left']}, 上 {m['top']}"
                      + (f"　→　送往 屏{dest}" if dest else "　→　不动（不参与）"))
-            cw["combo"].configure(values=["不动"] + [f"屏{j + 1}" for j in range(n) if j != i])
-            cw["var"].set(f"屏{dest}" if dest else "不动")
+            # 下拉的「显示文字」和「屏号」在这里一起定下来，屏号**单独存**在 nums 里。
+            # 老代码是从显示文字里抠数字（`v.startswith("屏")` + `int(v[1:])`），
+            # 那样显示文字就成了语义的一部分：文案一变（比如界面切成英文，
+            # 变成 "Screen 2"），判定为假 → 整段跳过 → 不报错、不写配置，
+            # 用户看到的就是「改了下拉没反应」。分开存之后文字随便改。
+            opts = [(LABEL_NONE, 0)] + [(f"屏{j + 1}", j + 1)
+                                        for j in range(n) if j != i]
+            cw["nums"] = [num for _label, num in opts]
+            cw["combo"].configure(values=[label for label, _num in opts])
+            cw["var"].set(next((lb for lb, num in opts if num == (dest or 0)),
+                               LABEL_NONE))
 
         self.perm_hint.configure(
             text="全部不动：按热键不会有任何窗口被移动" if not self.perm
@@ -2138,17 +2150,24 @@ class App:
         self.redo_btn.configure(
             text=T("恢复原状（再换一次）" if self._is_involution() else "再轮转一次"))
 
+    @staticmethod
+    def _card_choice(cw):
+        """这张卡的下拉框当前选的是几号屏；0 = 不动。
+
+        取值只看「选中第几项」，不看那项写的是什么字：nums 与 values 一一对应，
+        current() 给下标。显示文字以后翻译成什么，这里都不受影响。
+        """
+        k = cw["combo"].current()
+        return cw["nums"][k] if 0 <= k < len(cw["nums"]) else 0
+
     def _on_perm_change(self, idx):
         """用户改了某块屏的去向。同一块目标屏不能被两块源屏选走，撞车就把先来的让开。"""
         just = idx + 1
         chosen = {}
         for i, cw in enumerate(self.card_widgets):
-            v = cw["var"].get()
-            if v.startswith("屏"):
-                try:
-                    chosen[i + 1] = int(v[1:])
-                except ValueError:
-                    pass
+            num = self._card_choice(cw)
+            if num:
+                chosen[i + 1] = num
         final, note = {}, None
         for s in sorted(chosen, key=lambda k: (k != just, k)):
             d = chosen[s]

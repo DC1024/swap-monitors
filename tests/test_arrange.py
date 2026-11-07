@@ -171,6 +171,33 @@ def main():
         print(f"       引擎报错：{e}")
     check("剩下的排列仍能被引擎接受", engine_ok, True)
 
+    # ── 5b. 下拉取值不许认字 ──────────────────────────────────────
+    # 回归守卫：曾经是 `v.startswith("屏")` + `int(v[1:])`，从**显示文字**里抠屏号。
+    # 那样一改文案就崩：界面切成英文后选项是 "Screen 2"，判定为假 → 整段跳过 →
+    # 不报错、不弹框、不写配置，用户看到的就是「改了下拉没反应」。
+    # 这里直接把选项文字换成英文来模拟翻译后的界面 —— 修好之前这两条必红。
+    print("\n=== 5b. 下拉靠「第几项」取值，不认显示文字 ===")
+    app.mons = [fake_mon(0, -2560), fake_mon(1, 0, primary=True), fake_mon(2, 5120)]
+    app._perm_n = None
+    app._ensure_perm()
+    app.preset_none()                     # 内部 refresh() 会把 mons 换成真实显示器
+    app.mons = [fake_mon(0, -2560), fake_mon(1, 0, primary=True), fake_mon(2, 5120)]
+    app._perm_n = None
+    app._ensure_perm()
+    app._sync_cards()
+    cw0 = app.card_widgets[0]
+    cw0["combo"].configure(values=["None", "Screen 2", "Screen 3"])
+    cw0["var"].set("Screen 2")
+    app._on_perm_change(0)
+    check("英文选项也能选出屏号", app.perm.get(1), 2)
+    check("英文选项写进的配置也对", app.cfg.get("permute"), {"1": 2})
+
+    # 反过来也得成立：选项换成完全看不懂的文字，「不动」依旧是「不动」
+    cw0["combo"].configure(values=["—", "Screen 2", "Screen 3"])
+    cw0["var"].set("—")
+    app._on_perm_change(0)
+    check("认不出的那项按不动处理", app.perm, {})
+
     # ── 6. 坏配置要整体退回默认，不能半截生效 ──────────────────────
     print("\n=== 6. 非法配置的兜底 ===")
     for label, raw in (("目标屏重复", {"1": 2, "2": 2}),

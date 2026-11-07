@@ -23,6 +23,7 @@ Tk 的回调里抛的，被 Tk 自己兜住、只在 stderr 打一行 traceback�
 用法: python tests/test_static.py
 需要带 tkinter 的解释器（第 ③ 节要 import swap_gui）。
 """
+import ast
 import builtins
 import json
 import os
@@ -267,6 +268,61 @@ _md = open(_md_path, encoding="utf-8").read() if os.path.exists(_md_path) else "
 for _t in ("test_admin_mode.py", "test_static.py", "test_elevate.py",
            "test_hardening.py"):
     check(f"README 的测试清单里列出了 {_t}", _t in _md)
+
+# ============================================================
+section("⑧ 控件的显示文字不许当语义用（B1 回归）")
+# 踩过的坑：排列卡片的下拉框原来是 `v.startswith("屏")` + `int(v[1:])`，
+# 从**显示文字**里抠屏号。文案一变（界面切成英文后是 "Screen 2"）判定就为假 →
+# 不报错、不弹框、不写配置，用户看到的是「改了下拉没反应」。
+# 现在显示文字和屏号分开存（`nums` + `combo.current()`），文字随便翻。
+# 判定走 ast 而不是 grep：`_sync_cards` 的注释里就写着 `v.startswith("屏")`
+# 这句反例原文，字符串搜索会把注释也算上（test_i18n 已经在这上面栽过一次）。
+_CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]")
+
+
+def text_parsing_calls(path):
+    """返回 [(行号, 说明)]：拿中文字面量做前缀/后缀判定的调用。"""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), path)
+    bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if not (isinstance(fn, ast.Attribute) and fn.attr in ("startswith", "endswith")):
+            continue
+        for a in node.args:
+            if (isinstance(a, ast.Constant) and isinstance(a.value, str)
+                    and _CJK.search(a.value)):
+                bad.append((node.lineno, f".{fn.attr}({a.value!r})"))
+    return bad
+
+
+for _name in FILES:
+    _got = text_parsing_calls(os.path.join(ROOT, _name))
+    check(f"{_name} 没有「拿中文显示文字做判定」的 startswith/endswith",
+          not _got, str(_got))
+
+# 反向验证：把老写法塞进一个临时文件，检测器必须点名报出来（不然 ⑧ 上面的绿是假的）
+_bad_path = os.path.join(TMP, "bad_text_parse.py")
+with open(_bad_path, "w", encoding="utf-8") as f:
+    f.write('def f(v):\n'
+            '    if v.startswith("屏"):\n'
+            '        return int(v[1:])\n'
+            '    return 0\n')
+check("反向验证：`v.startswith(\"屏\")` 会被点名",
+      [ln for ln, _why in text_parsing_calls(_bad_path)] == [2],
+      str(text_parsing_calls(_bad_path)))
+
+# 取值那一步必须真的走下标（注释里说得好听、代码没改也照样能绿，所以直接看源码）
+import inspect                                             # noqa: E402
+_src_pick = inspect.getsource(G.App._card_choice)
+check("_card_choice 用 combo.current() 取「第几项」", "current()" in _src_pick)
+check("_card_choice 不再从显示文字里抠数字",
+      "startswith" not in _src_pick and "int(v[1:])" not in _src_pick)
+check("同一份代码里 values 与 nums 是两个分开的来源",
+      'cw["nums"] = [num for _label, num in opts]' in _src_gui
+      and "values=[label for label, _num in opts]" in _src_gui)
 
 print()
 if failures:
