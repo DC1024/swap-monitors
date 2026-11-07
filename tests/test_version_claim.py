@@ -28,9 +28,11 @@ except* 与 `def f[T]()` 在 3.12 才通过），但拦不住「语法一直是�
 """
 import ast
 import glob
+import io
 import os
 import re
 import sys
+import tokenize
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -132,6 +134,50 @@ else:
 
     check(f"{len(files)} 个 .py 在 3.{lo} 语法下全部可解析",
           not bad, "; ".join(bad[:4]))
+
+# ------------------------------------------------------------
+# 上面那条有个**盲区**，实测确认过：`ast.parse(feature_version=(3, 10))` 用的是
+# 当前解释器的 tokenizer，所以 PEP 701（f-string 里可以嵌套同类引号，3.12 才有）
+# 它照样放行。我写 `f"<Description>{_esc(T("…"))}</Description>"` 时，这条全绿，
+# 而 3.10/3.11 上一跑就是 SyntaxError。语法检查管不到的语法，只能自己扫。
+if lo < 12:
+    # 精确判据（文本正则试过两版都会误报，最终用 tokenize）：
+    # 3.12 的 tokenize 会给 f-string 发 FSTRING_START / FSTRING_END，
+    # 里面的 `{表达式}` 照常拆成普通 token。于是「f-string 的表达式里又出现
+    # **同一种引号字符**的字符串」= 只有在 3.12+ 才合法的写法。
+    #
+    # 两个都踩过的坑：
+    # 1. 不能看「f-string 里有没有字符串字面量」。隐式拼接 `f"a{x}" f"b{y}"`
+    #    在 AST 里是**一个** JoinedStr，源码片段横跨两对引号 → 误报一大片。
+    # 2. 比较的是**引号字符**，不是整段定界符。`f"""{T("x")}"""` 外层是 `"""`、
+    #    内层是 `"`，看起来「不一样」，但 3.11 同样拒 —— 判据就是「同一个引号
+    #    字符」。我第一版拿 `"""` 去 startswith 比对，所以这个真错误反而漏了。
+    def pep701_lines(src):
+        bad, stack = [], []
+        try:
+            toks = list(tokenize.generate_tokens(io.StringIO(src).readline))
+        except (tokenize.TokenError, IndentationError, SyntaxError):
+            return bad                     # 解不开的源码由上面那条断言负责报
+        for t in toks:
+            if t.type == getattr(tokenize, "FSTRING_START", -1):
+                body = t.string.lstrip("fFrRbBuU")
+                stack.append(body[0])      # 只记引号字符：' 或 "
+                continue
+            if t.type == getattr(tokenize, "FSTRING_END", -1):
+                if stack:
+                    stack.pop()
+                continue
+            if stack and t.type == tokenize.STRING and t.string[:1] == stack[-1]:
+                bad.append(t.start[0])
+        return sorted(set(bad))
+
+    fstr_bad = []
+    for path in files:
+        src = open(path, encoding="utf-8", errors="replace").read()
+        for ln in pep701_lines(src):
+            fstr_bad.append(f"{os.path.relpath(path, ROOT)}:{ln}")
+    check(f"没有依赖 PEP 701 的 f-string（3.{lo} 不认嵌套同类引号）",
+          not fstr_bad, "; ".join(sorted(set(fstr_bad))[:4]))
 
 print()
 if failures:

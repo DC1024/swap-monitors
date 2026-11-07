@@ -465,7 +465,7 @@ def parse_hotkey(spec):
         raise ValueError(T("认不出这部分：{parts}（主键只能是字母、数字或 F1–F24）",
                            parts=T("、").join(unknown)))
     if vk is None:
-        raise ValueError("热键里至少要有一个主键，例如 ctrl+alt+s")
+        raise ValueError(T("热键里至少要有一个主键，例如 ctrl+alt+s"))
     if not mods & (MOD_CONTROL | MOD_ALT | MOD_WIN):
         raise ValueError(T("必须带上 Ctrl / Alt / Win 之一："
                            "只按一个字母会把正常输入全抢走"))
@@ -992,7 +992,7 @@ def sync_autostart_if_moved():
 # 普通用户拿不到，会直接失败；两个实例都在同一个交互会话里，Local\ 足够。
 _SINGLE_MUTEX = None            # 句柄必须一直握着，句柄一关就相当于释放了
 _SINGLE_MUTEX_NAME = ""         # 记下实际用的名字，--diag 里能看见
-_SINGLE_MUTEX_NOTE = "（尚未尝试）"   # 失败原因。**绝不能静默吞掉** ——
+_SINGLE_MUTEX_NOTE = T("（尚未尝试）")   # 失败原因。**绝不能静默吞掉** ——
 # 「单实例悄悄失效」的表现是"双击后冒出第二个托盘图标"，肉眼很难联想到互斥体，
 # 所以这里把出错信息留在全局里，由 --diag 打印出来。
 
@@ -1014,11 +1014,12 @@ def _acquire_single_instance():
         h = k.CreateMutexW(None, False, name)
         err = ctypes.get_last_error()
         if not h:
-            _SINGLE_MUTEX_NOTE = f"CreateMutexW 失败，GetLastError={err}"
+            _SINGLE_MUTEX_NOTE = T("CreateMutexW 失败，GetLastError={err}", err=err)
             return True          # 互斥体都建不出来（权限/内核对象耗尽）就别挡着程序跑
         _SINGLE_MUTEX = h        # 故意泄漏句柄，进程退出时由系统回收
-        _SINGLE_MUTEX_NOTE = (f"已创建，last_error={err}"
-                              + ("（该名字已存在 → 不是唯一实例）" if err == 183 else ""))
+        _SINGLE_MUTEX_NOTE = (
+            T("已创建，last_error={err}", err=err)
+            + (T("（该名字已存在 → 不是唯一实例）") if err == 183 else ""))
         return err != 183        # ERROR_ALREADY_EXISTS
     except Exception as e:                                   # noqa: BLE001
         _SINGLE_MUTEX_NOTE = f"{type(e).__name__}: {e}"
@@ -1099,12 +1100,15 @@ def _task_xml():
     exe = _esc(_task_exe())
     sid = _esc(_current_user_sid())
     uri = _esc(TASK_NAME)
+    # 描述先算好再拼进 XML：直接写在 f-string 里就得嵌套同类引号
+    # （`{_esc(T("…"))}`），那只有 Python 3.12+ 才认，而本程序声明支持 3.10+。
+    desc = _esc(T("多屏窗口互换：以管理员权限启动，避免每次弹 UAC。"))
     # 用 --minimized 让自启时静默进托盘；任务触发器不会带上这个参数，
     # 所以写进 Arguments。
     xml = f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>多屏窗口互换：以管理员权限启动，避免每次弹 UAC。</Description>
+    <Description>{desc}</Description>
     <URI>\\{uri}</URI>
   </RegistrationInfo>
   <Triggers>
@@ -1285,9 +1289,9 @@ def create_elevated_task():
             return False, out
         # 再查一遍，确认系统真的把 RunLevel 落进去了（个别策略会静默忽略）
         if not task_runlevel_is_highest():
-            return False, ("任务已写入，但查回来的不是「最高权限」。\n"
-                           "多半是组策略限制了任务权限，或系统任务是别人建的。\n"
-                           + out.strip()[-300:])
+            return False, (T("任务已写入，但查回来的不是「最高权限」。\n"
+                             "多半是组策略限制了任务权限，或系统任务是别人建的。")
+                           + "\n" + out.strip()[-300:])
         return True, out
     finally:
         try:
@@ -1316,7 +1320,7 @@ def _diag_report():
     if not printed:
         # 双击运行、没有控制台：只能弹窗，否则用户什么都看不到
         try:
-            u32.MessageBoxW(None, txt, f"{APP_TITLE} 诊断信息",
+            u32.MessageBoxW(None, txt, T("{title} 诊断信息", title=T(APP_TITLE)),
                             MB_ICONINFORMATION | MB_TOPMOST)
         except Exception:
             pass
@@ -1360,34 +1364,40 @@ def verify_elevated_task():
     # 也是排查「双击冒出第二个托盘图标」这类问题的唯一线索。
     try:
         uniq = _acquire_single_instance()
-        lock_msg = ("抢到（当前没有别的实例在运行）" if uniq
-                    else "没抢到（已经有实例在运行）")
+        lock_msg = (T("抢到（当前没有别的实例在运行）") if uniq
+                    else T("没抢到（已经有实例在运行）"))
         _release_single_instance()
     except Exception as e:                                   # noqa: BLE001
-        lock_msg = f"抢锁异常 {type(e).__name__}: {e}"
+        lock_msg = T("抢锁异常 {err}", err=f"{type(e).__name__}: {e}")
 
     lines = []
     try:
-        lines.append(f"程序版本: {APP_VER}")
-        lines.append(f"可执行文件: {sys.executable}")
-        lines.append(f"frozen(打包运行): {bool(getattr(sys, 'frozen', False))}")
-        lines.append(f"配置文件: {CFG_PATH}")
-        lines.append(f"当前是否管理员: {is_elevated()}")
-        lines.append(f"计划任务名: {TASK_NAME}")
-        lines.append(f"计划任务存在: {task_exists()}")
-        lines.append(f"任务为最高权限: {task_runlevel_is_highest()}")
-        lines.append(f"任务指向当前程序: {task_points_to_current_exe()}")
-        lines.append(f"任务要拉起的程序: {_task_exe()}")
-        lines.append(f"开机自启 .cmd 存在: {os.path.exists(AUTOSTART_CMD)}")
-        lines.append(f"单实例互斥体名: {single_mutex_name()}")
-        lines.append(f"单实例本次抢锁: {lock_msg}")
-        lines.append(f"单实例状态: {_SINGLE_MUTEX_NOTE}")
-        lines.append(f"用户 SID: {_current_user_sid() or '（取不到！）'}")
+        # 每行都是「标签: 值」，所以统一走模板，标签单独成词条。
+        # 标签里的冒号也归中文那一侧 —— 英文排版要的是 "Version: 1.1.9"，
+        # 拼在模板里就没法只改一边。
+        for _label, _val in (
+                ("程序版本", APP_VER),
+                ("可执行文件", sys.executable),
+                ("frozen(打包运行)", bool(getattr(sys, "frozen", False))),
+                ("配置文件", CFG_PATH),
+                ("当前是否管理员", is_elevated()),
+                ("计划任务名", TASK_NAME),
+                ("计划任务存在", task_exists()),
+                ("任务为最高权限", task_runlevel_is_highest()),
+                ("任务指向当前程序", task_points_to_current_exe()),
+                ("任务要拉起的程序", _task_exe()),
+                ("开机自启 .cmd 存在", os.path.exists(AUTOSTART_CMD)),
+                ("单实例互斥体名", single_mutex_name()),
+                ("单实例本次抢锁", lock_msg),
+                ("单实例状态", _SINGLE_MUTEX_NOTE),
+                ("用户 SID", _current_user_sid() or T("（取不到！）"))):
+            lines.append(T("{label}: {value}", label=T(_label), value=_val))
         cfg = load_cfg()
-        lines.append(f"配置 run_as_admin: {cfg.get('run_as_admin')}")
-        lines.append(f"配置 autostart: {cfg.get('autostart')}")
+        for _label, _val in (("配置 run_as_admin", cfg.get("run_as_admin")),
+                             ("配置 autostart", cfg.get("autostart"))):
+            lines.append(T("{label}: {value}", label=T(_label), value=_val))
     except Exception as e:                                  # noqa: BLE001
-        lines.append(f"诊断过程出错: {e}")
+        lines.append(T("诊断过程出错: {err}", err=e))
     return "\n".join(lines)
 
 
@@ -2701,7 +2711,7 @@ def run_with_args(ns):
     try:
         data = json.loads(text.splitlines()[-1]) if text else {}
     except Exception:
-        data = {"ok": False, "errors": [f"输出解析失败: {text[:200]}"]}
+        data = {"ok": False, "errors": [T("输出解析失败: {text}", text=text[:200])]}
     data["_rc"] = rc
     return data
 

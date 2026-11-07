@@ -215,6 +215,8 @@ EN_TEXT = {
         "Cannot parse: {parts} (the main key must be a letter, a digit or F1–F24)",
     "必须带上 Ctrl / Alt / Win 之一：只按一个字母会把正常输入全抢走":
         "Need Ctrl / Alt / Win: a bare letter would swallow normal typing",
+    "热键里至少要有一个主键，例如 ctrl+alt+s":
+        "A hotkey needs at least one main key, e.g. ctrl+alt+s",
     "必须按住 Ctrl / Alt / Shift / Win 之一": "Hold Ctrl / Alt / Shift / Win",
     "不支持这个键：{key}": "Unsupported key: {key}",
 
@@ -300,6 +302,48 @@ EN_TEXT = {
     "请按下想用的组合键": "Press the key combination you want",
     "（Esc 取消，需含 Ctrl / Alt / Shift）":
         "(Esc to cancel, must include Ctrl / Alt / Shift)",
+
+    # ---- 诊断输出（--diag）----
+    # 这些行是「用户复制回来给维护者看」的，所以标签也翻 —— 不懂中文的人
+    # 拿到一份全中文的诊断，只能靠猜。
+    # 诊断行统一用 `"{label}: {value}"` 这个模板，它**故意不进表**：
+    # 两种语言的排版一模一样，进了表就会被「译文跟原文一样」那条守卫判成漏翻。
+    # 表里查不到 → 原样返回 → 再格式化，结果完全一样。
+    "程序版本": "Version",    "可执行文件": "Executable",
+    "frozen(打包运行)": "frozen (packaged)",
+    "配置文件": "Config file",
+    "当前是否管理员": "Is admin",
+    "计划任务名": "Task name",
+    "计划任务存在": "Task exists",
+    "任务为最高权限": "Task runs at highest privileges",
+    "任务指向当前程序": "Task points to this program",
+    "任务要拉起的程序": "Task launches",
+    "开机自启 .cmd 存在": "Autostart .cmd exists",
+    "单实例互斥体名": "Single-instance mutex",
+    "单实例本次抢锁": "Single-instance lock acquired",
+    "单实例状态": "Single-instance state",
+    "用户 SID": "User SID",
+    "（取不到！）": "(unavailable!)",
+    "配置 run_as_admin": "Config run_as_admin",
+    "配置 autostart": "Config autostart",
+    "诊断过程出错: {err}": "Diagnostics failed: {err}",
+    "{title} 诊断信息": "{title} diagnostics",
+    "抢到（当前没有别的实例在运行）": "acquired (no other instance running)",
+    "没抢到（已经有实例在运行）": "not acquired (another instance is running)",
+    "抢锁异常 {err}": "Lock error {err}",
+    "（尚未尝试）": "(not tried yet)",
+    "CreateMutexW 失败，GetLastError={err}":
+        "CreateMutexW failed, GetLastError={err}",
+    "已创建，last_error={err}": "created, last_error={err}",
+    "（该名字已存在 → 不是唯一实例）":
+        " (that name already existed → not the only instance)",
+    "任务已写入，但查回来的不是「最高权限」。\n"
+    "多半是组策略限制了任务权限，或系统任务是别人建的。":
+        "The task was written, but it does not come back as highest-privileges.\n"
+        "Group policy probably restricts it, or someone else created that task.",
+    "多屏窗口互换：以管理员权限启动，避免每次弹 UAC。":
+        "Swap Monitors: start with admin rights so UAC stops asking.",
+    "输出解析失败: {text}": "Could not parse output: {text}",
 
     # ---- 标点（当分隔符用，所以也得能翻）----
     "、": ", ",
