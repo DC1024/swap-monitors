@@ -1,6 +1,6 @@
 name: CI
 
-# 为什么 CI 只跑这 25 个脚本：
+# 为什么 CI 只跑这 26 个脚本：
 #   test_selftest / test_maximized 需要**两块真实显示器**（runner 是 0 块屏的
 #   headless 环境），verify_gui / tray_probe / demo_windows 是人工交互脚本。
 #   剩下这些要么是纯逻辑，要么只依赖 Tk，可以在 GitHub 的 Windows runner 上跑。
@@ -62,7 +62,7 @@ jobs:
           python -c "import sys, tkinter; print(sys.version); print('tk', tkinter.TkVersion)"
 
       - name: 语法检查
-        run: python -m compileall -q swap_gui.py swap_windows.py make_icon.py tests
+        run: python -m compileall -q swap_gui.py swap_windows.py swap_i18n.py make_icon.py tests
 
       # ---- 纯逻辑：不创建窗口、不移动窗口，任何机器都能跑 ----
       # 每个脚本单独跑、单独报，不能用 && 串：串起来第一个挂了后面的根本不跑，
@@ -71,7 +71,7 @@ jobs:
         shell: bash
         run: |
           fail=0
-          for t in test_map test_static test_elevate test_autostart test_hardening test_task_command test_hotkey_main_key test_move_window test_win32_decls test_title_filter test_tray_unpromote test_release_notes test_version_claim test_docs_assets; do
+          for t in test_map test_static test_elevate test_autostart test_hardening test_task_command test_hotkey_main_key test_move_window test_win32_decls test_title_filter test_tray_unpromote test_release_notes test_version_claim test_docs_assets test_i18n; do
             echo "::group::$t"
             python "tests/$t.py" || { echo "::error title=$t::tests/$t.py 有断言失败"; fail=1; }
             echo "::endgroup::"

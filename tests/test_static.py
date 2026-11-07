@@ -43,7 +43,7 @@ with open(TEST_CFG, "w", encoding="utf-8") as f:
               f, ensure_ascii=False)
 os.environ["SWAPMONITORS_CONFIG"] = TEST_CFG
 
-FILES = ["swap_gui.py", "swap_windows.py"]
+FILES = ["swap_gui.py", "swap_windows.py", "swap_i18n.py"]
 
 # 内建名 + 解释器自动注入的模块级 dunder
 ALLOWED = set(dir(builtins)) | {

@@ -28,6 +28,7 @@ from tkinter import ttk
 from xml.sax import saxutils
 
 import swap_windows as sw
+from swap_i18n import set_language
 
 APP_TITLE = "多屏窗口互换"
 APP_VER = "1.1.9"   # 1.1.9：托盘图标不再主动「固定到任务栏」（详见 README 对应小节）
@@ -51,6 +52,14 @@ DEFAULT_CFG = {
     "restore_focus": True,
     "autostart": False,
     "notify_on_swap": True,     # 互换完成后是否弹托盘气泡
+    # 界面语言：zh = 中文 / en = English / auto = 跟随系统。
+    # **默认 zh 而不是 auto**，两个理由：
+    #   1. 老配置里没有这一项，读出来就是这里的默认值 —— 一次升级不该
+    #      把人看着眼熟的界面语言悄悄换掉；
+    #   2. CI 跑在英文系统上，测试断言的是中文文案。默认跟随系统会让
+    #      「测试绿不绿」取决于 runner 的区域设置，那种红最难查。
+    # 想跟着系统走的人在配置里写 "auto" 即可（见 swap_i18n 的模块说明）。
+    "lang": "zh",
     "permute": None,            # {"1": 2, "2": 1} 这样的「哪块屏送往哪块屏」；None = 默认行为
     "run_as_admin": False,      # 记住管理员模式：由「最高权限」计划任务拉起，免 UAC
     # 托盘图标要不要「固定显示在任务栏上」。**默认关** —— Win11 自己会把图标收进
@@ -101,6 +110,16 @@ def save_cfg(cfg):
         return True
     except Exception:
         return False
+
+
+def apply_language(cfg):
+    """按配置定下界面语言，返回真正生效的那个（"zh" / "en"）。
+
+    「语言从哪读」是配置的事，所以放在这个文件；「怎么切、查不到怎么办」
+    是 swap_i18n 的事。分开的好处是它不依赖 Tk —— 命令行 / 诊断输出
+    也能在开窗口之前就把语言定下来。
+    """
+    return set_language(cfg.get("lang"))
 
 
 # ============================================================ 全局热键
@@ -1379,6 +1398,9 @@ class App:
     def __init__(self, root):
         self.root = root
         self.cfg = load_cfg()
+        # 定语言必须是建界面**之前**的第一件事：标题、卡片、按钮的文字
+        # 在建的那一刻就定下来了，晚一步就会先画出一帧旧语言再被覆盖。
+        apply_language(self.cfg)
         self.q = queue.Queue()
         self.busy = False
         self.mons = []
@@ -2631,6 +2653,9 @@ def main():
         sw._harden_console()
     except Exception:
         pass
+    # 语言要在任何输出**之前**定下来：--diag 和「带参数 → 透传给引擎」这两条路
+    # 都不建 App，只能在这里设。App 里还会再设一次（同一个值，无副作用）。
+    apply_language(load_cfg())
     argv = sys.argv[1:]
     if "--diag" in argv:
         return _diag_report()
