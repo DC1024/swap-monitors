@@ -231,6 +231,76 @@ EN_TEXT = {
     "　·　托盘未就绪": " · tray not ready",
     "{mark} 已注册：{hotkey}{extra}": "{mark} registered: {hotkey}{extra}",
 
+    # ---- 弹框与气泡（长句，正文里的换行用 \n\n 保留）----
+    "当前已经是管理员权限。": "Already running as admin.",
+    "提权没有成功（多数情况是你在 UAC 弹窗上点了「否」）。\n\n"
+    "也可以直接右键程序 →「以管理员身份运行」。":
+        "Elevation did not work (usually UAC was declined).\n\n"
+        "You can also right-click the program and pick \"Run as administrator\".",
+    "修改开机自启失败：{err}": "Could not change the autostart setting: {err}",
+    "创建「最高权限」计划任务失败。\n\n"
+    "常见原因：当前不是管理员，或系统策略禁止创建任务。\n\n"
+    "系统返回：{out}":
+        "Could not create the highest-privileges scheduled task.\n\n"
+        "Usual causes: not running as admin, or group policy blocks task creation.\n\n"
+        "System said: {out}",
+    "删除计划任务失败：{out}": "Could not delete the scheduled task: {out}",
+    "「记住管理员模式」需要创建一条「以最高权限运行」的计划任务，"
+    "这一步本身需要管理员权限。\n\n"
+    "现在以管理员身份重启一次来完成设置吗？\n"
+    "（这次会弹一次 UAC，之后启动就再也不弹了）":
+        "Admin mode needs a scheduled task that runs with the highest privileges, "
+        "and creating it requires admin rights.\n\n"
+        "Restart as admin now to finish the setup?\n"
+        "(One UAC prompt now, none on future launches)",
+    "创建「最高权限」计划任务失败，管理员模式没有开启。\n\n"
+    "常见原因：系统策略禁止创建计划任务，或杀软拦截了 schtasks。\n\n"
+    "系统返回：{out}":
+        "Could not create the highest-privileges scheduled task; admin mode stays off.\n\n"
+        "Usual causes: group policy blocks scheduled tasks, or antivirus blocked "
+        "schtasks.\n\nSystem said: {out}",
+    "{title}：互换未完成": "{title}: swap incomplete",
+    "有 {denied} 个窗口属于管理员权限运行的程序，普通权限搬不动它们。\n\n"
+    "是否以管理员身份重启本程序？\n"
+    "（会弹一次 UAC，界面会关闭后自动重开，热键会重新注册）":
+        "{denied} windows belong to programs running as admin, and a normal-privilege "
+        "process cannot move them.\n\n"
+        "Restart this program as admin?\n"
+        "(One UAC prompt; the window closes and reopens itself, and the hotkey is "
+        "registered again)",
+    "部分窗口未能互换：\n\n{errs}": "Some windows could not be swapped:\n\n{errs}",
+    "托盘图标已经注册好了，按 Win11 的习惯收在任务栏的「^ 隐藏的图标」里，"
+    "所以在托盘上暂时看不到它 —— 这不是没启动，热键随时可用。\n\n"
+    "如果你更希望它一直显示在任务栏上：\n"
+    "  1. 点任务栏右下角的  ^\n"
+    "  2. 把「多屏窗口互换」拖到任务栏上\n"
+    "也可以走设置：个性化 → 任务栏 → 其他系统托盘图标 → 打开「多屏窗口互换」\n\n"
+    "拖（或打开）一次就够了，之后 Windows 自己会记住。":
+        "The tray icon is registered — Win11 just files it under \"^ hidden icons\", "
+        "so it is not visible on the taskbar at first. That does not mean it failed to "
+        "start; the hotkey works right away.\n\n"
+        "If you would rather keep it visible:\n"
+        "  1. Click the ^ at the bottom right of the taskbar\n"
+        "  2. Drag \"Swap Monitors\" onto the taskbar\n"
+        "Or use Settings: Personalization → Taskbar → Other system tray icons → "
+        "turn on \"Swap Monitors\"\n\n"
+        "Once is enough — Windows remembers it.",
+    "（这条提示只出现一次）": "(this hint is shown only once)",
+    "已收进托盘，热键仍然有效。\n"
+    "左键点托盘图标显示界面，右键可互换 / 显示 / 退出。":
+        "Minimized to the tray; the hotkey still works.\n"
+        "Left-click the icon to show the window, right-click for swap / show / exit.",
+    "「排除的窗口标题」这段正则写错了：\n\n{err}\n\n"
+    "收到的是：{pat}\n\n"
+    "已经保留上一次能用的值，改对之后才会生效。":
+        "The regex in \"Excluded window titles\" is invalid:\n\n{err}\n\n"
+        "Received: {pat}\n\n"
+        "The last working value is still in effect; the new one applies once it parses.",
+    "录制热键": "Record hotkey",
+    "请按下想用的组合键": "Press the key combination you want",
+    "（Esc 取消，需含 Ctrl / Alt / Shift）":
+        "(Esc to cancel, must include Ctrl / Alt / Shift)",
+
     # ---- 标点（当分隔符用，所以也得能翻）----
     "、": ", ",
 }

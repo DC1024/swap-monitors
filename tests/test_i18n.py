@@ -420,6 +420,50 @@ check("反向：表里少一条就被点名",
       str(sorted(k for k in t_cjk_keys(os.path.join(ROOT, "swap_gui.py"))
                  if k not in _short)))
 
+# ------------------------------------------------------------
+# ④e  弹框 / 气泡的正文必须走 T()
+# ⑦ 扫的是控件，`messagebox.showwarning(APP_TITLE, "……")` 这种字符串它根本
+# 看不见 —— 而弹框恰恰是用户最容易撞上、又最不该出现中英混杂的地方。
+_CALLS = {"showinfo", "showwarning", "showerror", "askyesno", "askokcancel",
+          "notify"}
+
+
+def untranslated_dialog_texts(path):
+    """返回 [(行号, 调用, 片段)]：弹框/气泡里没包 T() 的中文字面量。"""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), path)
+    bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if not (isinstance(fn, ast.Attribute) and fn.attr in _CALLS):
+            continue
+        for a in node.args:
+            # 只看直接写的中文字面量；T(...) 是个 Call，天然不会被匹配到
+            if (isinstance(a, ast.Constant) and isinstance(a.value, str)
+                    and CJK.search(a.value)):
+                bad.append((a.lineno, fn.attr, a.value.split("\n")[0][:30]))
+            # 拼接形态 "a" "b" 会被 ast 合成一个 Constant，上面已经覆盖；
+            # 但 `tip + "\n\n" + T(...)` 里的 tip 是变量，静态看不出来，跳过。
+    return bad
+
+
+for _p in ("swap_gui.py", "swap_windows.py"):
+    _bad = untranslated_dialog_texts(os.path.join(ROOT, _p))
+    check(f"{_p} 里弹框/气泡的正文都包了 T()", not _bad,
+          "; ".join(f"L{n} {c} {t!r}" for n, c, t in _bad[:3]))
+
+_dpath = os.path.join(TMP, "bad_dialog.py")
+with open(_dpath, "w", encoding="utf-8") as f:
+    f.write("def g():\n"
+            "    messagebox.showwarning(APP_TITLE, \"没翻的正文\")\n"
+            "    messagebox.showinfo(APP_TITLE, T(\"翻好的\"))\n"
+            "    hk.notify(APP_TITLE, \"没翻的气泡\")\n")
+check("反向：没包 T() 的弹框正文被点名（2 条）",
+      [ln for ln, _c, _t in untranslated_dialog_texts(_dpath)] == [2, 4],
+      str(untranslated_dialog_texts(_dpath)))
+
 # ============================================================
 section("⑤ lang 配置项：默认中文、脏值不崩")
 

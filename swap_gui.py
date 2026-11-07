@@ -1704,15 +1704,16 @@ class App:
 
     def record_hotkey(self):
         top = tk.Toplevel(self.root)
-        top.title("录制热键")
+        top.title(T("录制热键"))
         top.configure(bg=C_BG)
         top.resizable(False, False)
         w, h = 360, 150
         top.geometry(f"{w}x{h}+{self.root.winfo_x() + 260}+{self.root.winfo_y() + 260}")
         top.transient(self.root)
-        ttk.Label(top, text="请按下想用的组合键", style="Title.TLabel",
+        ttk.Label(top, text=T("请按下想用的组合键"), style="Title.TLabel",
                   font=(FONT, 12, "bold")).pack(pady=(24, 6))
-        lb = ttk.Label(top, text="（Esc 取消，需含 Ctrl / Alt / Shift）", style="Sub.TLabel")
+        lb = ttk.Label(top, text=T("（Esc 取消，需含 Ctrl / Alt / Shift）"),
+                   style="Sub.TLabel")
         lb.pack()
 
         modmap = {0x4: MOD_CONTROL, 0x20000: MOD_ALT, 0x1: MOD_SHIFT, 0x40000: MOD_WIN}
@@ -1783,7 +1784,7 @@ class App:
 
     def elevate(self):
         if is_elevated():
-            messagebox.showinfo(APP_TITLE, "当前已经是管理员权限。", parent=self.root)
+            messagebox.showinfo(APP_TITLE, T("当前已经是管理员权限。"), parent=self.root)
             return
         self._save()
         # 先释放热键再拉起新实例，否则新实例会因热键被自己占着而注册失败
@@ -1800,8 +1801,8 @@ class App:
             _acquire_single_instance()   # 提权没成功，互斥体得收回来
             messagebox.showwarning(
                 APP_TITLE,
-                "提权没有成功（多数情况是你在 UAC 弹窗上点了「否」）。\n\n"
-                "也可以直接右键程序 →「以管理员身份运行」。",
+                T("提权没有成功（多数情况是你在 UAC 弹窗上点了「否」）。\n\n"
+                  "也可以直接右键程序 →「以管理员身份运行」。"),
                 parent=self.root)
             self.start_hotkey()        # 提权失败，把热键注册回来
 
@@ -1828,7 +1829,9 @@ class App:
                     os.remove(AUTOSTART_CMD)
                 self.set_status(T("已取消开机自启"))
         except Exception as e:  # noqa: BLE001
-            messagebox.showwarning(APP_TITLE, f"修改开机自启失败：{e}", parent=self.root)
+            messagebox.showwarning(APP_TITLE,
+                                   T("修改开机自启失败：{err}", err=e),
+                                   parent=self.root)
 
     # ---------- 记住管理员模式 ----------
     def set_run_as_admin(self):
@@ -1862,9 +1865,9 @@ class App:
                 self._save()
                 messagebox.showwarning(
                     APP_TITLE,
-                    "创建「最高权限」计划任务失败。\n\n"
-                    "常见原因：当前不是管理员，或系统策略禁止创建任务。\n\n"
-                    f"系统返回：{out.strip()[:300]}",
+                    T("创建「最高权限」计划任务失败。\n\n"
+                      "常见原因：当前不是管理员，或系统策略禁止创建任务。\n\n"
+                      "系统返回：{out}", out=out.strip()[:300]),
                     parent=self.root)
             return
         # 关闭：删掉任务，并同步关掉「开机自启」（那是任务在管的事）
@@ -1873,9 +1876,10 @@ class App:
         if task_exists():
             ok, out = delete_elevated_task()
             if not ok and is_elevated():
-                messagebox.showwarning(APP_TITLE,
-                                       f"删除计划任务失败：{out.strip()[:200]}",
-                                       parent=self.root)
+                messagebox.showwarning(
+                    APP_TITLE,
+                    T("删除计划任务失败：{out}", out=out.strip()[:200]),
+                    parent=self.root)
                 return
         self.set_status(T("已关闭管理员模式，下次启动恢复为普通权限"))
 
@@ -1890,10 +1894,10 @@ class App:
         """未提权时询问是否顺手提权重启以创建任务；返回 True 表示已发起重启。"""
         if not messagebox.askyesno(
                 APP_TITLE,
-                "「记住管理员模式」需要创建一条「以最高权限运行」的计划任务，"
-                "这一步本身需要管理员权限。\n\n"
-                "现在以管理员身份重启一次来完成设置吗？\n"
-                "（这次会弹一次 UAC，之后启动就再也不弹了）",
+                T("「记住管理员模式」需要创建一条「以最高权限运行」的计划任务，"
+                  "这一步本身需要管理员权限。\n\n"
+                  "现在以管理员身份重启一次来完成设置吗？\n"
+                  "（这次会弹一次 UAC，之后启动就再也不弹了）"),
                 parent=self.root):
             self.set_status(T("已取消：未开启管理员模式"))
             return False
@@ -1952,9 +1956,9 @@ class App:
                 self.set_status(T("管理员模式设置失败（已保持关闭）"))
                 messagebox.showwarning(
                     APP_TITLE,
-                    "创建「最高权限」计划任务失败，管理员模式没有开启。\n\n"
-                    "常见原因：系统策略禁止创建计划任务，或杀软拦截了 schtasks。\n\n"
-                    f"系统返回：{str(out).strip()[:300]}",
+                    T("创建「最高权限」计划任务失败，管理员模式没有开启。\n\n"
+                      "常见原因：系统策略禁止创建计划任务，或杀软拦截了 schtasks。\n\n"
+                      "系统返回：{out}", out=str(out).strip()[:300]),
                     parent=self.root)
             return
 
@@ -2292,20 +2296,24 @@ class App:
                 return
             if self.hidden:      # 界面收在托盘时不能用模态框（会弹在看不见的地方）
                 if self.hk:
-                    self.hk.notify(f"{APP_TITLE}：互换未完成",
+                    self.hk.notify(T("{title}：互换未完成", title=APP_TITLE),
                                    "\n".join(errs[:4]), warning=True)
                 return
             if denied:
                 if messagebox.askyesno(
                         APP_TITLE,
-                        f"有 {denied} 个窗口属于管理员权限运行的程序，普通权限搬不动它们。\n\n"
-                        "是否以管理员身份重启本程序？\n"
-                        "（会弹一次 UAC，界面会关闭后自动重开，热键会重新注册）",
+                        T("有 {denied} 个窗口属于管理员权限运行的程序，"
+                          "普通权限搬不动它们。\n\n"
+                          "是否以管理员身份重启本程序？\n"
+                          "（会弹一次 UAC，界面会关闭后自动重开，热键会重新注册）",
+                          denied=denied),
                         parent=self.root):
                     self.elevate()
                 return
-            messagebox.showwarning(APP_TITLE, "部分窗口未能互换：\n\n"
-                                   + "\n".join(errs[:6]), parent=self.root)
+            messagebox.showwarning(
+                APP_TITLE,
+                T("部分窗口未能互换：\n\n{errs}", errs="\n".join(errs[:6])),
+                parent=self.root)
             return
 
         if dry:
@@ -2375,8 +2383,9 @@ class App:
                 if self.hk:
                     self.hk.notify(APP_TITLE, tip, warning=True)
             else:
-                messagebox.showinfo(APP_TITLE, tip + "\n\n（这条提示只出现一次）",
-                                    parent=self.root)
+                messagebox.showinfo(
+                    APP_TITLE, tip + "\n\n" + T("（这条提示只出现一次）"),
+                    parent=self.root)
         except Exception:                      # noqa: BLE001
             return False                       # 没展示成功 → 不记账，留机会重试
         self.cfg["_overflow_hint_acked"] = True
@@ -2410,14 +2419,14 @@ class App:
         self.set_status(T("托盘图标已就绪（收在 ^ 隐藏区里，想常显就拖出来）"))
         # 只有**真的展示出去**了才算提示过。失败（比如弹窗那步抛异常）就留着机会，
         # 等下一次 tray_ok（explorer 重启重挂图标时还会再来一次）再试。
-        if self._overflow_hint(
+        if self._overflow_hint(T(
                 "托盘图标已经注册好了，按 Win11 的习惯收在任务栏的「^ 隐藏的图标」里，"
                 "所以在托盘上暂时看不到它 —— 这不是没启动，热键随时可用。\n\n"
                 "如果你更希望它一直显示在任务栏上：\n"
                 "  1. 点任务栏右下角的  ^\n"
                 "  2. 把「多屏窗口互换」拖到任务栏上\n"
                 "也可以走设置：个性化 → 任务栏 → 其他系统托盘图标 → 打开「多屏窗口互换」\n\n"
-                "拖（或打开）一次就够了，之后 Windows 自己会记住。"):
+                "拖（或打开）一次就够了，之后 Windows 自己会记住。")):
             self._overflow_hinted = True
 
     # ---------- 事件循环 ----------
@@ -2549,9 +2558,9 @@ class App:
         try:
             re.compile(pat, re.I)
         except re.error as e:
-            msg = (f"「排除的窗口标题」这段正则写错了：\n\n{e}\n\n"
-                   f"收到的是：{pat}\n\n"
-                   f"已经保留上一次能用的值，改对之后才会生效。")
+            msg = T("「排除的窗口标题」这段正则写错了：\n\n{err}\n\n"
+                    "收到的是：{pat}\n\n"
+                    "已经保留上一次能用的值，改对之后才会生效。", err=e, pat=pat)
             self.set_status(T("排除标题的正则写错了：{err}", err=e))
             try:
                 messagebox.showwarning(APP_TITLE, msg, parent=self.root)
@@ -2635,9 +2644,9 @@ class App:
         if not self.tray_hint_shown:
             self.tray_hint_shown = True
             if self.hk:
-                self.hk.notify(APP_TITLE,
-                               "已收进托盘，热键仍然有效。\n"
-                               "左键点托盘图标显示界面，右键可互换 / 显示 / 退出。")
+                self.hk.notify(APP_TITLE, T(
+                    "已收进托盘，热键仍然有效。\n"
+                    "左键点托盘图标显示界面，右键可互换 / 显示 / 退出。"))
 
     def show_window(self):
         """从托盘恢复主界面。"""
