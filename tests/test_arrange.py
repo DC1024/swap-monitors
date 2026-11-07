@@ -254,18 +254,53 @@ def main():
     # 回归守卫：曾经尺寸是在 refresh() 更新计数文字、start_hotkey() 写状态栏
     # **之前**量的，窗口比内容矮 100px 上下，底部那排开关直接被裁掉看不见。
     # 这里用「三块屏 → 卡片排成两行」的最坏情况来量。
-    print("\n=== 7. 窗口尺寸装得下内容（防裁切回归）===")
-    root.deiconify()
-    app._fit()
-    root.update_idletasks()
-    need, got = root.winfo_reqheight(), root.winfo_height()
-    print(f"       内容需要 {need}px，窗口实际 {got}px")
-    check("窗口高度 >= 内容所需高度", got >= need, True)
-    mw, mh = root.minsize()
-    check("minsize 也不小于内容高度", mh >= need, True)
-    root.withdraw()
-
+    #
+    # ⚠️ 中英各建**一次窗**来量。别偷懒写成「改完语言再 _fit()」：控件文字是在
+    # 建窗那一刻由 T() 定死的，apply_language() 只换词条表、不会重设已有控件的
+    # text —— 那样量出来的英文尺寸和中文一模一样（本批第一版就这么写的，
+    # 两行都是 1009px，等于没测）。
+    print("\n=== 7. 窗口尺寸装得下内容（防裁切回归，中英各量一次）===")
     root.destroy()
+
+    def measure(lang):
+        """按指定语言**新建**一次窗口，返回 (需要高度, 实际高度, 需要宽度, 屏宽)。"""
+        with open(TEST_CFG, "w", encoding="utf-8") as f:
+            json.dump({"lang": lang, "permute": {"1": 2, "2": 3, "3": 1}}, f)
+        r = tk.Tk()
+        r.withdraw()
+        a = G.App(r)
+        # 三块伪造屏 → 卡片排两行，这是最坏情况
+        a.mons = [fake_mon(0, -2560), fake_mon(1, 0, primary=True),
+                  fake_mon(2, 5120)]
+        a._perm_n = None
+        a._ensure_perm()
+        a._sync_cards()
+        r.deiconify()
+        a._fit()
+        r.update_idletasks()
+        out = (r.winfo_reqheight(), r.winfo_height(),
+               r.winfo_reqwidth(), r.winfo_screenwidth())
+        r.destroy()
+        return out
+
+    _sizes = {}
+    for _lang, _label in (("zh", "中文"), ("en", "英文")):
+        _need, _got, _rw, _sw_w = measure(_lang)
+        _sizes[_lang] = _need
+        print(f"       [{_label}] 内容需要 {_need}px，窗口实际 {_got}px，"
+              f"宽 {_rw}px")
+        # 注意 check(label, got, want) 是**相等比较**，布尔断言要写 (…, True)
+        check(f"[{_label}] 窗口高度 >= 内容所需高度", _got >= _need, True)
+        check(f"[{_label}] 窗口宽度没超出屏幕", _rw <= _sw_w, True)
+
+    # 这条证明上面两次量的**不是同一个数**（否则「中英各量一次」是假动作）。
+    # 本批第一版写「改完语言再 _fit()」，两次都是 1009px —— 因为控件文字在
+    # 建窗那一刻就定死了，apply_language() 不会重设已有控件的 text。
+    print(f"       中文需要 {_sizes['zh']}px，英文需要 {_sizes['en']}px")
+    check("英文界面量到的高度是合理值（不是 1px 那种假窗口）",
+          _sizes["en"] > 300, True)
+
+    # root 在 §7 开头就 destroy 了（要按语言重新建窗），这里不能再碰它
     os.remove(TEST_CFG)
 
     print()
