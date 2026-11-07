@@ -44,6 +44,10 @@ CHOICES = (ZH, EN, AUTO)  # 配置项允许写的三种
 #   · 用**动词开头的短句**当按钮/菜单项：Record / Apply / Swap now / Exit
 #   · 整句提示用陈述语气，不加句号，首字母大写
 #   · 不翻译品牌名（多屏窗口互换 = Swap Monitors，与 exe 名一致）
+#
+# 带数字的句子用**命名占位符**当模板：`"屏{src}→屏{dst}"`。
+# 两边的占位符名字和个数必须一一对应 —— 多一个就是 KeyError（界面退回中文），
+# 少一个就是数字凭空消失，两种都不报错，所以 tests/test_i18n.py 静态比对。
 EN_TEXT = {
     # ---- 窗口标题与页头 ----
     "多屏窗口互换": "Swap Monitors",
@@ -58,6 +62,10 @@ EN_TEXT = {
     "环形轮转": "Rotate",
     "两两互换": "Pair up",
     "全部不动": "Keep all",
+    # 模板词条（占位符由调用方传）：见 T() 的说明
+    "屏{src}→屏{dst}": "Screen {src} → Screen {dst}",
+    "全部不动：按热键不会有任何窗口被移动":
+        "Keep all: the hotkey moves nothing",
 
     # ---- 窗口清单 ----
     "参与互换的窗口": "WINDOWS TO SWAP",
@@ -113,6 +121,9 @@ EN_TEXT = {
     "未设热键": "no hotkey",
     "热键": "hotkey",
     "左键双击显示、右键菜单": "double-click to show, right-click for menu",
+
+    # ---- 标点（当分隔符用，所以也得能翻）----
+    "、": ", ",
 }
 
 
@@ -179,7 +190,7 @@ def set_language(lang):
     return _ACTIVE
 
 
-def T(text):
+def T(text, **kw):
     """把界面上的中文原文换成当前语言；查不到就原样返回。
 
     名字就叫 T（translate 的首字母），因为一档扫下来会有上百个调用点，
@@ -187,7 +198,28 @@ def T(text):
 
     非字符串原样返回：这个函数会被顺手用在 `T(某个参数)` 上，
     随手把 None 变成 "None" 是最难查的一类 bug。
+
+    **kw 是模板参数 —— 带数字/名字的句子要写成模板，不要用 f-string：
+
+        T("屏{src}→屏{dst}", src=s, dst=d)      # 对
+        T(f"屏{s}→屏{dst}")                     # 错：key 里已经是渲染后的值
+
+    第二种写法看着更短，但 key 会变成「屏1→屏2」「屏2→屏3」……每种组合
+    都是一条新词条，表里永远填不完。模板写法则只有一条 key。
+    中文下也要走 format（否则界面上直接看到 `屏{src}`），所以别省这两个字符。
     """
-    if not isinstance(text, str) or _ACTIVE == ZH:
+    if not isinstance(text, str):
         return text
-    return EN_TEXT.get(text, text)
+    out = text if _ACTIVE == ZH else EN_TEXT.get(text, text)
+    if not kw:
+        return out
+    try:
+        return out.format(**kw)
+    except (KeyError, IndexError, ValueError):
+        # 译文里的占位符和原文对不上（多写、少写、拼错）。守卫测试能静态抓到
+        # 这种错，但运行时也得有个台阶：退回中文原文再格式化一次，
+        # 让用户看到一句完整的中文，而不是 `Screen {src} → Screen `。
+        try:
+            return text.format(**kw)
+        except (KeyError, IndexError, ValueError):
+            return text

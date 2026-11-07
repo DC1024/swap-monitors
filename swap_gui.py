@@ -2142,9 +2142,12 @@ class App:
             cw["var"].set(next((lb for lb, num in opts if num == (dest or 0)),
                                LABEL_NONE))
 
+        # 屏号走模板参数（`屏{src}→屏{dst}`），别用 f-string —— 那样每种屏号
+        # 组合都会变成一条新词条。顿号同理：英文里该是逗号，它自己也是一条词条。
         self.perm_hint.configure(
-            text="全部不动：按热键不会有任何窗口被移动" if not self.perm
-            else "、".join(f"屏{s}→屏{d}" for s, d in sorted(self.perm.items())))
+            text=T("全部不动：按热键不会有任何窗口被移动") if not self.perm
+            else T("、").join(T("屏{src}→屏{dst}", src=s, dst=d)
+                             for s, d in sorted(self.perm.items())))
         self._set_stack_hint(self._stack_hint(self.perm))
         # 「恢复原状」只在对换时成立；轮转要说「再转一次」
         self.redo_btn.configure(

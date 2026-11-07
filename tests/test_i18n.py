@@ -18,6 +18,7 @@
 import json
 import os
 import re
+import string
 import sys
 import tempfile
 
@@ -79,6 +80,44 @@ finally:
     I.set_language("zh")
 
 check("假表已经撤掉（别污染后面的检查）", I.EN_TEXT is _REAL_TABLE)
+
+# ============================================================
+section("①b T() 的模板参数（带数字的句子不许写成 f-string）")
+# 为什么必须有模板：`T(f"屏{s}→屏{d}")` 的 key 是渲染后的「屏1→屏2」，
+# 每种屏号组合都是一条新词条，表永远填不满。写成 `T("屏{src}→屏{dst}", src=s)`
+# 才只有一条。这里验的是**格式化这条路通不通**，真表里的模板由 ④ 的守卫盯着。
+I.EN_TEXT = {"屏{src}→屏{dst}": "Screen {src} → Screen {dst}",
+             "共 {n} 个窗口": "Total {count} windows"}   # ← 占位符故意写错
+try:
+    I.set_language("zh")
+    check("中文下也要格式化（否则界面上直接看到 `屏{src}`）",
+          I.T("屏{src}→屏{dst}", src=1, dst=2) == "屏1→屏2",
+          I.T("屏{src}→屏{dst}", src=1, dst=2))
+    check("没传参数时一个花括号都不碰",
+          I.T("带{花括号}的句子") == "带{花括号}的句子")
+
+    I.set_language("en")
+    check("英文下查表 + 格式化",
+          I.T("屏{src}→屏{dst}", src=1, dst=2) == "Screen 1 → Screen 2",
+          I.T("屏{src}→屏{dst}", src=1, dst=2))
+    check("表里没有这条时，用中文模板格式化",
+          I.T("送往 {name}", name="屏3") == "送往 屏3",
+          I.T("送往 {name}", name="屏3"))
+    check("译文占位符对不上 → 退回中文模板，照样给出完整句子",
+          I.T("共 {n} 个窗口", n=3) == "共 3 个窗口",
+          I.T("共 {n} 个窗口", n=3))
+    check("连原文都缺参数 → 原样返回，不抛异常",
+          I.T("共 {n} 个窗口", m=3) == "共 {n} 个窗口",
+          I.T("共 {n} 个窗口", m=3))
+    check("参数值里带花括号不会被二次展开",
+          I.T("送往 {name}", name="{怪}") == "送往 {怪}",
+          I.T("送往 {name}", name="{怪}"))
+    check("非字符串照样原样返回（带着参数也不变）", I.T(None, n=1) is None)
+finally:
+    I.EN_TEXT = _REAL_TABLE
+    I.set_language("zh")
+
+check("①b 的假表也撤掉了", I.EN_TEXT is _REAL_TABLE)
 
 # ============================================================
 section("② set_language：各种写法都要收敛对")
@@ -146,6 +185,32 @@ def untranslated(table):
     return bad
 
 
+def fields(s):
+    """模板里的占位符名字集合；`{` 没配对（根本写不成模板）时返回 None。"""
+    try:
+        return {name for _lit, name, _spec, _conv in string.Formatter().parse(s)
+                if name is not None}
+    except ValueError:
+        return None
+
+
+def bad_placeholders(table):
+    """原文与译文的占位符对不上的词条。
+
+    多一个 → 跑到那句就是 KeyError（T() 里兜住了，界面退回中文原文）；
+    少一个 → 数字凭空消失，用户看到 `Screen  → Screen `。
+    两种都**不会报错**，只能静态比对，所以这条守卫不能省。
+    """
+    bad = []
+    for k, v in table.items():
+        if "{" not in k and "{" not in (v if isinstance(v, str) else ""):
+            continue
+        fk, fv = fields(k), fields(v if isinstance(v, str) else "")
+        if fk is None or fv is None or fk != fv:
+            bad.append((k, fk, fv))
+    return bad
+
+
 _SRC_ALL = GUI_SRC + WIN_SRC
 
 _stray = stray_keys(I.EN_TEXT, _SRC_ALL)
@@ -155,6 +220,11 @@ check(f"表里 {len(I.EN_TEXT)} 个键都能在源码里找到原文", not _stra
 _untr = untranslated(I.EN_TEXT)
 check("没有「译文还是中文 / 译文是空 / 译文跟原文一样」的词条", not _untr,
       "; ".join(f"{k} → {v}" for k, v in _untr[:5]))
+
+_N_TPL = sum(1 for k in I.EN_TEXT if "{" in k)
+_bp = bad_placeholders(I.EN_TEXT)
+check(f"模板词条（共 {_N_TPL} 条）两边的占位符一一对应", not _bp,
+      "; ".join(f"{k}: 原文 {a} / 译文 {b}" for k, a, b in _bp[:3]))
 
 # 反向验证：表还是空的时候上面两条必然绿，所以必须证明检测器真能抓到问题，
 # 不然它就是一条永远绿、永远不管事的假守卫。
@@ -173,9 +243,73 @@ check("反向：漏翻 / 没翻 / 填空的译文被拎出来（3 条）",
       str(sorted(k for k, _v in untranslated(_FAKE))))
 check("反向：正常的那条不被误伤", "录制" not in [k for k, _v in untranslated(_FAKE)])
 
+_FAKE_TPL = {
+    "共 {n} 个窗口": "Total {count} windows",          # 名字对不上
+    "屏{src}→屏{dst}": "Screen {src}",                 # 少一个占位符
+    "第 {i} 次": "Attempt {i} of {total}",             # 多一个占位符
+    "已用 {n}/{all}": "Used {n} of {all}",             # 正常
+    "一共 {0} 个": "Total {0}",                         # 位置参数（能用，但别这么写）
+}
+_bp_fake = [k for k, _a, _b in bad_placeholders(_FAKE_TPL)]
+check("反向：占位符名字不一致 / 少一个 / 多一个都被拎出来（3 条）",
+      sorted(_bp_fake) == sorted(["共 {n} 个窗口", "屏{src}→屏{dst}", "第 {i} 次"]),
+      str(sorted(_bp_fake)))
+check("反向：占位符对得上的模板不被误伤",
+      not set(_bp_fake) & {"已用 {n}/{all}", "一共 {0} 个"}, str(_bp_fake))
+
 # 纯英文的译文不该被 CJK 规则碰到（不然这条守卫会把正确的翻译判成错）
 check("纯英文译文不触发 CJK 规则",
       not CJK.search("Restore original layout (optional)"))
+
+# ------------------------------------------------------------
+# ④b  T() 的第一个参数不许是 f-string
+# 这是模板机制真正的入口守卫：`T(f"共 {n} 个窗口")` 语法上合法、中文下看着也对，
+# 但 key 是「共 3 个窗口」「共 12 个窗口」……每种取值都是一条新词条，
+# 表里永远填不满，而英文界面下这些句子**永远是中文**，还查不出原因。
+import ast                                                  # noqa: E402
+
+
+def fstring_keys(path):
+    """返回 [(行号, 中文片段)]：T() 拿 f-string 当 key 的调用点。"""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), path)
+    bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        fn = node.func
+        name = (fn.id if isinstance(fn, ast.Name)
+                else fn.attr if isinstance(fn, ast.Attribute) else "")
+        if name != "T":
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.JoinedStr):
+            flat = "".join(p.value if isinstance(p, ast.Constant) else ""
+                           for p in first.values)
+            if CJK.search(flat):
+                bad.append((node.lineno, flat[:40]))
+    return bad
+
+
+for _p in ("swap_gui.py", "swap_windows.py"):
+    _bad = fstring_keys(os.path.join(ROOT, _p))
+    check(f"{_p} 里没有 T(f\"…\") 这种写法（要用模板参数）", not _bad, str(_bad))
+
+# 反向验证：换成一个真这么写的临时文件，必须点名报出来
+_fpath = os.path.join(TMP, "bad_fstring_key.py")
+with open(_fpath, "w", encoding="utf-8") as f:
+    f.write("def g(n):\n"
+            "    return T(f\"共 {n} 个窗口\")\n")
+check("反向：T(f\"共 {n} 个窗口\") 会被点名",
+      [ln for ln, _t in fstring_keys(_fpath)] == [2], str(fstring_keys(_fpath)))
+
+# 顺带把「正常写法不被误伤」也钉住（条件表达式当参数是合法用法）
+_okpath = os.path.join(TMP, "ok_key.py")
+with open(_okpath, "w", encoding="utf-8") as f:
+    f.write("def g(flag):\n"
+            "    return T(\"恢复原状（再换一次）\" if flag else \"再轮转一次\")\n")
+check("反向：条件表达式当参数不被误伤", fstring_keys(_okpath) == [],
+      str(fstring_keys(_okpath)))
 
 # ============================================================
 section("⑤ lang 配置项：默认中文、脏值不崩")

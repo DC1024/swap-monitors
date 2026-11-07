@@ -198,6 +198,40 @@ def main():
     app._on_perm_change(0)
     check("认不出的那项按不动处理", app.perm, {})
 
+    # ── 5c. 排列提示是模板化出来的，不是 f-string 拼出来的 ──────────────
+    # `T("屏{src}→屏{dst}", src=..., dst=...)`：一条词条覆盖所有屏号组合。
+    # 这里连着真控件验一遍，顺带证明英文下也是同一句模板渲染的。
+    print("\n=== 5c. 排列提示走模板（中英各渲染一次）===")
+    app._apply_perm({1: 2}, "test")     # 内部 refresh() 会把 mons 换回真实显示器
+    app.mons = [fake_mon(0, -2560), fake_mon(1, 0, primary=True), fake_mon(2, 5120)]
+    app._perm_n = None
+    app._ensure_perm()
+    app._sync_cards()
+    G.set_language("zh")
+    app._sync_cards()
+    check("中文下提示是「屏1→屏2」", app.perm_hint.cget("text"), "屏1→屏2")
+    G.set_language("en")
+    app._sync_cards()
+    check("英文下提示是「Screen 1 → Screen 2」",
+          app.perm_hint.cget("text"), "Screen 1 → Screen 2")
+    app._apply_perm({1: 2, 2: 3}, "test")   # 多个映射：顺带验分隔符也翻了
+    app.mons = [fake_mon(0, -2560), fake_mon(1, 0, primary=True), fake_mon(2, 5120)]
+    app._perm_n = None
+    app._ensure_perm()
+    G.set_language("en")
+    app._sync_cards()
+    check("英文下分隔符是逗号而不是顿号",
+          app.perm_hint.cget("text"), "Screen 1 → Screen 2, Screen 2 → Screen 3")
+    G.set_language("zh")                # 别把语言状态漏给后面的小节
+    app._apply_perm({}, "test")
+    # 伪造的三屏得装回去：`_apply_perm` 里的 refresh() 会把 mons 换回真实显示器，
+    # 而 §7 是按「三块屏 → 卡片排成两行」这个最坏情况量的。少了这一步，
+    # 那条防裁切守卫就在更矮的界面上量，等于悄悄放水。
+    app.mons = [fake_mon(0, -2560), fake_mon(1, 0, primary=True), fake_mon(2, 5120)]
+    app._perm_n = None
+    app._ensure_perm()
+    app._sync_cards()
+
     # ── 6. 坏配置要整体退回默认，不能半截生效 ──────────────────────
     print("\n=== 6. 非法配置的兜底 ===")
     for label, raw in (("目标屏重复", {"1": 2, "2": 2}),
