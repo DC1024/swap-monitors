@@ -182,12 +182,26 @@ jobs:
             # 这种判空兜底根本拦不住，只会安静地把错内容发出去。v1.1.9 首发就这么
             # 把 commit 标题挂上了发布页（内容还说得通，于是更难发现）。
             # 直接问 API 要 tag 对象：跟本地 ref 是附注还是轻量、checkout 怎么抓的无关。
+            #
+            # ⚠️ 「第一行当标题」这条约定要靠**写 tag 的人**遵守：v1.2.0 的附注
+            # 第一行是一整句「界面现在有英文了。主界面、托盘菜单、弹框、气泡、…」，
+            # 于是标题栏被截成半句话（正文是好的，只是标题难看）。
+            # 所以下面加一道长度兜底：第一行太长就不拿它当标题，改用默认的
+            # `<tag> · 多屏窗口互换`，并把它并回正文 —— 宁可标题朴素，也不要半句话。
             obj_type=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.type)
             if [ "$obj_type" = "tag" ]; then
               obj_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha)
               msg=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$obj_sha" --jq .message)
               title=$(printf '%s\n' "$msg" | sed -n '1p')
-              notes=$(printf '%s\n' "$msg" | sed '1d' | sed '/./,$!d')
+              # 标题超过 60 个字符就不认它（GitHub 侧标题栏也放不下），
+              # 整段原样当正文，标题走下面的默认值。
+              if [ "${#title}" -gt 60 ]; then
+                echo "::notice::tag 附注第一行有 ${#title} 个字符，太长，不当标题用"
+                title=""
+                notes=$(printf '%s\n' "$msg" | sed '/./,$!d')
+              else
+                notes=$(printf '%s\n' "$msg" | sed '1d' | sed '/./,$!d')
+              fi
             else
               echo "::warning::tag $tag 是轻量标签（不是附注），发布说明只能回退到提交信息；以后请用 git tag -a 打标签"
               title=""
