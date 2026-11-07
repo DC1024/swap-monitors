@@ -31,7 +31,7 @@ import swap_windows as sw
 from swap_i18n import T, current as current_lang, set_language
 
 APP_TITLE = "多屏窗口互换"
-APP_VER = "1.1.9"   # 1.1.9：托盘图标不再主动「固定到任务栏」（详见 README 对应小节）
+APP_VER = "1.2.0"   # 1.2.0：界面支持中文 / English 切换（详见 README 对应小节）
 # 排列卡片下拉框里「不参与」那一项的文字。语义上它对应 0 号屏（= 不动），
 # 但两者是分开的：0 是数据，这句话是显示，翻成什么语言都不影响取值。
 # ⚠️ 这里是**词条 key**，不要直接拿去显示 —— 用的时候写 T(LABEL_NONE)，
