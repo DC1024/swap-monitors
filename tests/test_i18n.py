@@ -422,9 +422,13 @@ check("选了个没变的选项不刷状态栏（早退，不做无用功）",
       _app.status.cget("text") == _before, _app.status.cget("text"))
 _root.destroy()
 
-# 配置里写着 auto 时，下拉框显示的是「跟随系统」而不是实际生效的那种语言
+# 配置里写着 auto 时，下拉框要停在 auto 那一项。
+# ⚠️ 这里**不能**断言字面是「跟随系统」：CI 是英文系统，auto 会解析成 en，
+# 那一项的标签就变成 "Auto" 了 —— 本文件第一版正是这么写的，CI 直接红在
+# 这条上。断言「选中的那一项对应的配置值等于 auto」才跟语言无关。
 _root2, _app2 = build_app("auto")
-check("配置是 auto 时下拉框显示「跟随系统」", _app2.lang_var.get() == "跟随系统",
+check("配置是 auto 时下拉框停在 auto 那一项（标签跟着界面语言变，不查字面）",
+      [v for lb, v in _app2._lang_choices if lb == _app2.lang_var.get()] == ["auto"],
       _app2.lang_var.get())
 _root2.destroy()
 
